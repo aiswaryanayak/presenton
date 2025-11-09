@@ -5,11 +5,9 @@ import json
 from typing import AsyncGenerator, List, Optional
 from fastapi import HTTPException
 from openai import AsyncOpenAI
-from openai.types.chat.chat_completion_chunk import (
-    ChatCompletionChunk as OpenAIChatCompletionChunk,
-)
-from google import genai
-from google.genai.types import (
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenAIChatCompletionChunk
+import google.generativeai as genai  # ✅ FIXED
+from google.generativeai.types import (  # ✅ FIXED
     Content as GoogleContent,
     Part as GoogleContentPart,
     GenerateContentConfig,
@@ -102,7 +100,6 @@ class LLMClient:
         google_api_key = get_google_api_key_env()
         if not google_api_key:
             raise HTTPException(status_code=400, detail="Google API Key is not set.")
-        # Explicitly set env so Google SDK finds it even on Render
         os.environ["GOOGLE_API_KEY"] = google_api_key
         return genai.Client(api_key=google_api_key)
 
@@ -175,9 +172,7 @@ class LLMClient:
         return contents
 
     def _get_anthropic_messages(self, messages: List[LLMMessage]) -> List[LLMMessage]:
-        return [
-            msg for msg in messages if not isinstance(msg, LLMSystemMessage)
-        ]
+        return [msg for msg in messages if not isinstance(msg, LLMSystemMessage)]
 
     # --------------------------------------- #
     # Generate — Core Functionality
