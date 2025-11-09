@@ -6,8 +6,8 @@ from typing import AsyncGenerator, List, Optional
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenAIChatCompletionChunk
-import google.generativeai as genai  # ✅ FIXED
-from google.generativeai.types import (  # ✅ FIXED
+import google.generativeai as genai  # ✅ Correct main import
+from google.ai.generativelanguage_v1beta.types import (  # ✅ Corrected type imports
     Content as GoogleContent,
     Part as GoogleContentPart,
     GenerateContentConfig,
@@ -265,3 +265,4 @@ class LLMClient:
             config=config,
         )
         return response.text or ""
+
