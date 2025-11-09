@@ -3,7 +3,8 @@ import os
 import aiohttp
 import google.generativeai as genai
 
-from google.genai.types import GenerateContentConfig
+from google.generativeai.types import GenerateContentConfig
+
 from openai import AsyncOpenAI
 from models.image_prompt import ImagePrompt
 from models.sql.image_asset import ImageAsset
