@@ -1,5 +1,4 @@
 from fastapi import HTTPException
-
 from constants.llm import (
     DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_GOOGLE_MODEL,
@@ -15,38 +14,48 @@ from utils.get_env import (
     get_openai_model_env,
 )
 
-
 def get_llm_provider():
-    try:
-        return LLMProvider(get_llm_provider_env())
-    except:
+    """Return the active LLM provider from environment."""
+    provider_env = get_llm_provider_env()
+    if not provider_env:
+        return LLMProvider.OPENAI  # fallback default
+
+    provider = provider_env.strip().lower()
+
+    # Handle aliases
+    if provider in ["openai"]:
+        return LLMProvider.OPENAI
+    elif provider in ["google", "gemini"]:
+        return LLMProvider.GOOGLE
+    elif provider in ["anthropic"]:
+        return LLMProvider.ANTHROPIC
+    elif provider in ["ollama"]:
+        return LLMProvider.OLLAMA
+    elif provider in ["custom"]:
+        return LLMProvider.CUSTOM
+    else:
         raise HTTPException(
             status_code=500,
-            detail=f"Invalid LLM provider. Please select one of: openai, google, anthropic, ollama, custom",
+            detail=f"Invalid LLM provider '{provider_env}'. Please select one of: openai, google, gemini, anthropic, ollama, custom.",
         )
-
 
 def is_openai_selected():
     return get_llm_provider() == LLMProvider.OPENAI
 
-
 def is_google_selected():
     return get_llm_provider() == LLMProvider.GOOGLE
-
 
 def is_anthropic_selected():
     return get_llm_provider() == LLMProvider.ANTHROPIC
 
-
 def is_ollama_selected():
     return get_llm_provider() == LLMProvider.OLLAMA
-
 
 def is_custom_llm_selected():
     return get_llm_provider() == LLMProvider.CUSTOM
 
-
 def get_model():
+    """Return the default or user-specified model based on LLM provider."""
     selected_llm = get_llm_provider()
     if selected_llm == LLMProvider.OPENAI:
         return get_openai_model_env() or DEFAULT_OPENAI_MODEL
@@ -61,5 +70,6 @@ def get_model():
     else:
         raise HTTPException(
             status_code=500,
-            detail=f"Invalid LLM provider. Please select one of: openai, google, anthropic, ollama, custom",
+            detail="Invalid LLM provider. Please select one of: openai, google, gemini, anthropic, ollama, custom.",
         )
+
