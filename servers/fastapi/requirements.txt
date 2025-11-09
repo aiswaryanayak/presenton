@@ -1,9 +1,11 @@
 fastapi
 uvicorn
 sqlalchemy
+sqlmodel
 pydantic
 google-generativeai
 requests
 beautifulsoup4
 python-multipart
 jinja2
+databases[sqlite]
