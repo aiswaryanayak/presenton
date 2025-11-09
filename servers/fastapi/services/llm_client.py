@@ -10,18 +10,20 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenA
 # ✅ Correct Gemini import for google-generativeai >=0.8.5
 import google.generativeai as genai
 
-# ✅ Correct type imports for this version (no GoogleSearch anymore)
+# ✅ From generativelanguage_v1beta.types (core content + tool definitions)
 from google.ai.generativelanguage_v1beta.types import (
     Content as GoogleContent,
     Part as GoogleContentPart,
     Tool as GoogleTool,
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
-    FunctionCallingConfigMode as GoogleFunctionCallingConfigMode,
 )
 
-# ✅ GenerateContentConfig now lives here
-from google.generativeai.types import GenerateContentConfig
+# ✅ From generativeai.types (moved configs + enums)
+from google.generativeai.types import (
+    GenerateContentConfig,
+    FunctionCallingConfigMode,  # ✅ moved here
+)
 
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage
@@ -66,4 +68,3 @@ from utils.schema_utils import (
     flatten_json_schema,
     remove_titles_from_schema,
 )
-
