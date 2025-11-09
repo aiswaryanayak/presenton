@@ -1,7 +1,8 @@
 import asyncio
 import os
 import aiohttp
-from google import genai
+import google.generativeai as genai
+
 from google.genai.types import GenerateContentConfig
 from openai import AsyncOpenAI
 from models.image_prompt import ImagePrompt
