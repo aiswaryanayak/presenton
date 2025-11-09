@@ -1,6 +1,7 @@
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel
-from google.genai.types import Content as GoogleContent
+from google.generativeai.types import Content as GoogleContent
+
 
 from models.llm_tool_call import AnthropicToolCall
 
