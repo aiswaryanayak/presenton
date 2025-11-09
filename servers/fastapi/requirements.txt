@@ -14,3 +14,4 @@ anthropic
 openai
 aiofiles
 python-pptx
+pdfplumber
