@@ -1,5 +1,5 @@
 from typing import Any, List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import google.generativeai as genai
 
 from models.llm_tool_call import AnthropicToolCall
@@ -28,8 +28,9 @@ class OpenAIAssistantMessage(LLMMessage):
 
 class GoogleAssistantMessage(LLMMessage):
     """Assistant message format for Google Gemini."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # ✅ Important fix
     role: Literal["assistant"] = "assistant"
-    content: genai.protos.Content  # ✅ FINAL FIX (moved from types → protos)
+    content: genai.protos.Content  # ✅ Using protos instead of types
 
 
 class AnthropicAssistantMessage(LLMMessage):
@@ -59,3 +60,4 @@ class GoogleToolCallMessage(LLMMessage):
     id: Optional[str] = None
     name: str
     response: dict
+
