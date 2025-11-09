@@ -3,9 +3,6 @@ import os
 import aiohttp
 import google.generativeai as genai
 
-from google.ai.generativelanguage_v1beta.types.content import GenerateContentConfig
-
-
 from openai import AsyncOpenAI
 from models.image_prompt import ImagePrompt
 from models.sql.image_asset import ImageAsset
@@ -60,7 +57,9 @@ class ImageGenerationService:
             if self.is_stock_provider_selected():
                 image_path = await self.image_gen_func(image_prompt)
             else:
-                image_path = await self.image_gen_func(image_prompt, self.output_directory)
+                image_path = await self.image_gen_func(
+                    image_prompt, self.output_directory
+                )
 
             if image_path:
                 if image_path.startswith("http"):
@@ -96,21 +95,25 @@ class ImageGenerationService:
     async def generate_image_google(self, prompt: str, output_directory: str) -> str:
         """Generate an image using Gemini Flash (Google)."""
         client = genai.Client()
+
+        # Latest SDK uses generation_config instead of GenerateContentConfig
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-2.5-flash-image-preview",
             contents=[prompt],
-            config=GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
+            generation_config={
+                "response_mime_type": "image/jpeg",
+            },
         )
 
         image_path = None
         for part in response.candidates[0].content.parts:
-            if part.text:
-                print(part.text)
-            elif part.inline_data:
+            if hasattr(part, "inline_data") and part.inline_data is not None:
                 image_path = os.path.join(output_directory, f"{uuid.uuid4()}.jpg")
                 with open(image_path, "wb") as f:
                     f.write(part.inline_data.data)
+            elif hasattr(part, "text") and part.text:
+                print(part.text)
 
         return image_path or "/static/images/placeholder.jpg"
 
