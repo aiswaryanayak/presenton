@@ -3,14 +3,14 @@ import os
 import aiohttp
 import google.generativeai as genai
 
-from google.generativeai.types import GenerateContentConfig
+# ✅ Correct import for google-generativeai >= 0.8.5
+from google.ai.generativelanguage_v1beta.types import GenerateContentConfig
 
 from openai import AsyncOpenAI
 from models.image_prompt import ImagePrompt
 from models.sql.image_asset import ImageAsset
 from utils.download_helpers import download_file
-from utils.get_env import get_pexels_api_key_env
-from utils.get_env import get_pixabay_api_key_env
+from utils.get_env import get_pexels_api_key_env, get_pixabay_api_key_env
 from utils.image_provider import (
     is_pixels_selected,
     is_pixabay_selected,
@@ -43,10 +43,9 @@ class ImageGenerationService:
     async def generate_image(self, prompt: ImagePrompt) -> str | ImageAsset:
         """
         Generates an image based on the provided prompt.
-        - If no image generation function is available, returns a placeholder image.
-        - If the stock provider is selected, it uses the prompt directly,
-        otherwise it uses the full image prompt with theme.
-        - Output Directory is used for saving the generated image not the stock provider.
+        - Uses placeholder if no provider is configured.
+        - Uses full themed prompt for AI providers (Gemini/OpenAI).
+        - Returns local ImageAsset if downloaded, else direct URL.
         """
         if not self.image_gen_func:
             print("No image generation function found. Using placeholder image.")
@@ -55,15 +54,14 @@ class ImageGenerationService:
         image_prompt = prompt.get_image_prompt(
             with_theme=not self.is_stock_provider_selected()
         )
-        print(f"Request - Generating Image for {image_prompt}")
+        print(f"Request - Generating Image for: {image_prompt}")
 
         try:
             if self.is_stock_provider_selected():
                 image_path = await self.image_gen_func(image_prompt)
             else:
-                image_path = await self.image_gen_func(
-                    image_prompt, self.output_directory
-                )
+                image_path = await self.image_gen_func(image_prompt, self.output_directory)
+
             if image_path:
                 if image_path.startswith("http"):
                     return image_path
@@ -83,6 +81,7 @@ class ImageGenerationService:
             return "/static/images/placeholder.jpg"
 
     async def generate_image_openai(self, prompt: str, output_directory: str) -> str:
+        """Generate an image using DALL·E 3."""
         client = AsyncOpenAI()
         result = await client.images.generate(
             model="dall-e-3",
@@ -95,6 +94,7 @@ class ImageGenerationService:
         return await download_file(image_url, output_directory)
 
     async def generate_image_google(self, prompt: str, output_directory: str) -> str:
+        """Generate an image using Gemini Flash (Google)."""
         client = genai.Client()
         response = await asyncio.to_thread(
             client.models.generate_content,
@@ -103,31 +103,32 @@ class ImageGenerationService:
             config=GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         )
 
+        image_path = None
         for part in response.candidates[0].content.parts:
-            if part.text is not None:
+            if part.text:
                 print(part.text)
-            elif part.inline_data is not None:
+            elif part.inline_data:
                 image_path = os.path.join(output_directory, f"{uuid.uuid4()}.jpg")
                 with open(image_path, "wb") as f:
                     f.write(part.inline_data.data)
 
-        return image_path
+        return image_path or "/static/images/placeholder.jpg"
 
     async def get_image_from_pexels(self, prompt: str) -> str:
+        """Fetch an image from Pexels."""
         async with aiohttp.ClientSession(trust_env=True) as session:
             response = await session.get(
                 f"https://api.pexels.com/v1/search?query={prompt}&per_page=1",
                 headers={"Authorization": f"{get_pexels_api_key_env()}"},
             )
             data = await response.json()
-            image_url = data["photos"][0]["src"]["large"]
-            return image_url
+            return data["photos"][0]["src"]["large"]
 
     async def get_image_from_pixabay(self, prompt: str) -> str:
+        """Fetch an image from Pixabay."""
         async with aiohttp.ClientSession(trust_env=True) as session:
             response = await session.get(
                 f"https://pixabay.com/api/?key={get_pixabay_api_key_env()}&q={prompt}&image_type=photo&per_page=3"
             )
             data = await response.json()
-            image_url = data["hits"][0]["largeImageURL"]
-            return image_url
+            return data["hits"][0]["largeImageURL"]
