@@ -1,11 +1,20 @@
+# Core backend
 fastapi
 uvicorn
 sqlalchemy
 sqlmodel
 pydantic
+databases[sqlite]
+
+# Google Gemini AI
 google-generativeai
+
+# Utilities
 requests
 beautifulsoup4
 python-multipart
 jinja2
-databases[sqlite]
+
+# Async helpers and typing
+aiohttp
+typing-extensions
