@@ -1,13 +1,12 @@
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel
-from google.generativeai.types import Content as GoogleContent
-
-
+import google.generativeai as genai
 
 from models.llm_tool_call import AnthropicToolCall
 
 
 class LLMMessage(BaseModel):
+    """Base class for all LLM message types."""
     pass
 
 
@@ -23,13 +22,14 @@ class LLMSystemMessage(LLMMessage):
 
 class OpenAIAssistantMessage(LLMMessage):
     role: Literal["assistant"] = "assistant"
-    content: str | None = None
+    content: Optional[str] = None
     tool_calls: Optional[List[dict]] = None
 
 
 class GoogleAssistantMessage(LLMMessage):
+    """Assistant message format for Google Gemini."""
     role: Literal["assistant"] = "assistant"
-    content: GoogleContent
+    content: genai.types.Content  # ✅ Updated import
 
 
 class AnthropicAssistantMessage(LLMMessage):
