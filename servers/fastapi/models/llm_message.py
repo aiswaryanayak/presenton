@@ -29,7 +29,7 @@ class OpenAIAssistantMessage(LLMMessage):
 class GoogleAssistantMessage(LLMMessage):
     """Assistant message format for Google Gemini."""
     role: Literal["assistant"] = "assistant"
-    content: genai.types.Content  # ✅ Updated import
+    content: genai.protos.Content  # ✅ FINAL FIX (moved from types → protos)
 
 
 class AnthropicAssistantMessage(LLMMessage):
