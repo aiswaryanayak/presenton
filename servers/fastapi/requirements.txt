@@ -1,17 +1,40 @@
+# Core FastAPI + Server
 fastapi
 uvicorn
+aiofiles
+jinja2
+python-multipart
+
+# Database & ORM
 sqlalchemy
 sqlmodel
-pydantic
+databases[sqlite]
+
+# LLM & AI Providers
+openai
+anthropic
 google-generativeai
+
+# Utilities
 requests
 beautifulsoup4
-python-multipart
-jinja2
-databases[sqlite]
 dirtyjson
-anthropic
-openai
-aiofiles
+tqdm
+typing-extensions
+
+# File & Document Handling
 python-pptx
 pdfplumber
+python-docx
+docling
+PyMuPDF
+pypdf2
+xlsxwriter
+lxml
+
+# Optional but safe dependencies used by docling & pptx
+pydantic
+protobuf
+httpx
+httpcore
+cachetools
