@@ -67,3 +67,4 @@ pyasn1
 pyasn1-modules
 uritemplate
 jiter
+pathvalidate==3.2.0
