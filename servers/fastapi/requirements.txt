@@ -12,3 +12,5 @@ databases[sqlite]
 dirtyjson
 anthropic
 openai
+aiofiles
+python-pptx
