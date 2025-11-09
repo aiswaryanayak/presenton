@@ -6,19 +6,22 @@ from typing import AsyncGenerator, List, Optional
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenAIChatCompletionChunk
-import google.generativeai as genai  # ✅ Main Gemini import
 
-# ✅ Correct imports for your installed version (google-generativeai==0.8.5)
+# ✅ Correct Gemini import for google-generativeai >=0.8.5
+import google.generativeai as genai
+
+# ✅ Correct type imports for this version (no GoogleSearch anymore)
 from google.ai.generativelanguage_v1beta.types import (
     Content as GoogleContent,
     Part as GoogleContentPart,
-    GoogleSearch,
+    Tool as GoogleTool,
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
     FunctionCallingConfigMode as GoogleFunctionCallingConfigMode,
-    Tool as GoogleTool,
 )
-from google.generativeai.types import GenerateContentConfig  # ✅ GenerateContentConfig moved here
+
+# ✅ GenerateContentConfig now lives here
+from google.generativeai.types import GenerateContentConfig
 
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage
@@ -63,3 +66,4 @@ from utils.schema_utils import (
     flatten_json_schema,
     remove_titles_from_schema,
 )
+
