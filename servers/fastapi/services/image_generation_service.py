@@ -3,8 +3,8 @@ import os
 import aiohttp
 import google.generativeai as genai
 
-# ✅ Correct import for google-generativeai >= 0.8.5
-from google.ai.generativelanguage_v1beta.types import GenerateContentConfig
+from google.ai.generativelanguage_v1beta.types.content import GenerateContentConfig
+
 
 from openai import AsyncOpenAI
 from models.image_prompt import ImagePrompt
