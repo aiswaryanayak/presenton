@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-python-multipart
+sqlalchemy
+pydantic
+google-generativeai
 requests
 beautifulsoup4
-pydantic
+python-multipart
 jinja2
-aiofiles
-google-generativeai
