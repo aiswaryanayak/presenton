@@ -1,61 +1,79 @@
+# Use a lightweight Python base image
 FROM python:3.11-slim-bookworm
 
-# Install Node.js and npm
+# ----------------------------
+# System dependencies
+# ----------------------------
 RUN apt-get update && apt-get install -y \
     nginx \
     curl \
     libreoffice \
     fontconfig \
-    chromium
+    chromium \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-
-# Install Node.js 20 using NodeSource repository
+# Install Node.js 20 (for Next.js)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs
+    apt-get install -y nodejs && \
+    npm install -g npm@latest
 
-
-# Create a working directory
+# ----------------------------
+# Set working directory
+# ----------------------------
 WORKDIR /app  
 
-# Set environment variables
+# ----------------------------
+# Environment variables
+# ----------------------------
 ENV APP_DATA_DIRECTORY=/app_data
 ENV TEMP_DIRECTORY=/tmp/presenton
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# ----------------------------
+# Install Ollama (optional local LLM runtime)
+# ----------------------------
+RUN curl -fsSL https://ollama.com/install.sh | sh || echo "Skipping Ollama install"
 
-# Install ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
-
-# Install dependencies for FastAPI
-RUN pip install aiohttp aiomysql aiosqlite asyncpg fastapi[standard] \
-    pathvalidate pdfplumber chromadb sqlmodel \
+# ----------------------------
+# Install Python dependencies (cleaned)
+# ----------------------------
+RUN pip install --no-cache-dir aiohttp aiomysql aiosqlite asyncpg fastapi[standard] \
+    pathvalidate pdfplumber sqlmodel \
     anthropic google-genai openai fastmcp dirtyjson
-RUN pip install docling --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Install dependencies for Next.js
+# Optional: docling for document parsing (CPU-only build)
+RUN pip install --no-cache-dir docling --extra-index-url https://download.pytorch.org/whl/cpu
+
+# ----------------------------
+# Install dependencies & build Next.js frontend
+# ----------------------------
 WORKDIR /app/servers/nextjs
 COPY servers/nextjs/package.json servers/nextjs/package-lock.json ./
-RUN npm install
+RUN npm ci
 
-
-# Copy Next.js app
 COPY servers/nextjs/ /app/servers/nextjs/
-
-# Build the Next.js app
-WORKDIR /app/servers/nextjs
 RUN npm run build
 
+# ----------------------------
+# Copy FastAPI backend
+# ----------------------------
 WORKDIR /app
-
-# Copy FastAPI
 COPY servers/fastapi/ ./servers/fastapi/
 COPY start.js LICENSE NOTICE ./
 
-# Copy nginx configuration
+# ----------------------------
+# Nginx setup
+# ----------------------------
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Expose the port
+# ----------------------------
+# Expose port
+# ----------------------------
 EXPOSE 80
 
-# Start the servers
+# ----------------------------
+# Start both servers
+# ----------------------------
+CMD ["bash", "-c", "service nginx start && uvicorn servers.fastapi.api.main:app --host 0.0.0.0 --port 8000"]
+
 CMD ["node", "/app/start.js"]
