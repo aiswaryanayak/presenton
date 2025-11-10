@@ -18,8 +18,16 @@ from google.ai.generativelanguage_v1beta.types import (
     Tool as GoogleTool,
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
-    FunctionCallingConfigMode as GoogleFunctionCallingConfigMode,  # safe to include
 )
+
+# ✅ In google-generativeai 0.8.5, FunctionCallingConfigMode doesn't exist
+# Replace it with a simple Enum-like string fallback
+GoogleFunctionCallingConfigMode = type("GoogleFunctionCallingConfigMode", (), {
+    "AUTO": "AUTO",
+    "ANY": "ANY",
+    "NONE": "NONE",
+})
+
 
 # ✅ Correct location for GenerateContentConfig
 from google.generativeai.types import GenerateContentConfig
