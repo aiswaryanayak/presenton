@@ -2,16 +2,15 @@ import os
 import asyncio
 import dirtyjson
 import json
-
-
 from typing import AsyncGenerator, List, Optional
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenAIChatCompletionChunk
 
-# ✅ Stable Gemini import for google-generativeai 0.8.5
+# ✅ Stable Gemini import for google-generativeai==0.8.5
 import google.generativeai as genai
 
+# ✅ Compatible type imports (FunctionCallingConfigMode removed in this version)
 from google.ai.generativelanguage_v1beta.types import (
     Content as GoogleContent,
     Part as GoogleContentPart,
@@ -20,25 +19,29 @@ from google.ai.generativelanguage_v1beta.types import (
     FunctionCallingConfig as GoogleFunctionCallingConfig,
 )
 
-# ✅ In google-generativeai 0.8.5, FunctionCallingConfigMode doesn't exist
-# Replace it with a simple Enum-like string fallback
+# ✅ Manual fallback for FunctionCallingConfigMode (removed upstream)
 GoogleFunctionCallingConfigMode = type("GoogleFunctionCallingConfigMode", (), {
     "AUTO": "AUTO",
     "ANY": "ANY",
     "NONE": "NONE",
 })
 
+# ✅ Safe import for GenerateContentConfig (may not exist in some builds)
+try:
+    from google.generativeai.types import GenerateContentConfig
+except ImportError:
+    class GenerateContentConfig:
+        """Fallback stub for older builds where the class isn't exposed."""
+        def __init__(self, **kwargs):
+            self.config = kwargs
 
-# ✅ Correct location for GenerateContentConfig
-from google.generativeai.types import GenerateContentConfig
 
-
-
-
+# ✅ Anthropic imports
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage
 from anthropic import MessageStreamEvent as AnthropicMessageStreamEvent
 
+# ✅ Internal imports
 from enums.llm_provider import LLMProvider
 from models.llm_message import (
     AnthropicAssistantMessage,
@@ -79,4 +82,3 @@ from utils.schema_utils import (
     flatten_json_schema,
     remove_titles_from_schema,
 )
-
