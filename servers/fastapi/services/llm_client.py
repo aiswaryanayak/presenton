@@ -2,6 +2,8 @@ import os
 import asyncio
 import dirtyjson
 import json
+
+
 from typing import AsyncGenerator, List, Optional
 from fastapi import HTTPException
 from openai import AsyncOpenAI
@@ -16,7 +18,8 @@ from google.ai.generativelanguage_v1beta.types import (
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
 )
-from google.ai.generativelanguage_v1beta.types import GenerateContentConfig
+from google.ai.generativelanguage import GenerateContentConfig
+
 
 
 from anthropic import AsyncAnthropic
