@@ -9,6 +9,7 @@ from utils.datetime_utils import get_current_utc_datetime
 
 class TemplateModel(SQLModel, table=True):
     __tablename__ = "templates"
+    __table_args__ = {"extend_existing": True}  # ✅ Fix for duplicate table definition
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
@@ -21,6 +22,8 @@ class TemplateModel(SQLModel, table=True):
     )
     created_at: datetime = Field(
         sa_column=Column(
-            DateTime(timezone=True), nullable=False, default=get_current_utc_datetime
+            DateTime(timezone=True),
+            nullable=False,
+            default=get_current_utc_datetime,
         ),
     )
