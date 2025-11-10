@@ -5,6 +5,7 @@ from models.llm_message import LLMSystemMessage, LLMUserMessage
 from models.llm_tools import SearchWebTool
 from servers.fastapi.services.llm_client import LLMClient
 from servers.fastapi.services.icon_generator_service import generate_slide_icons
+from servers.fastapi.services.web_scraper_connector import get_content_or_scrape  # ✅ NEW import
 
 from utils.get_dynamic_models import get_presentation_outline_model_with_n_slides
 from utils.llm_client_error_handler import handle_llm_client_exceptions
@@ -82,7 +83,7 @@ def get_messages(
 
 
 # ---------------------------------------------
-# Main Function with Icon Integration
+# Main Function with Scraper + Icon Integration
 # ---------------------------------------------
 async def generate_ppt_outline(
     content: str,
@@ -97,8 +98,13 @@ async def generate_ppt_outline(
 ) -> AsyncGenerator[dict, None]:
     """
     Generates a presentation outline using Gemini 2.0 Exp and attaches icon data per slide.
+    Automatically scrapes content if input is a URL.
     """
 
+    # 🔍 Step 1: Handle URL input automatically
+    cleaned_content = await get_content_or_scrape(content)
+
+    # 🧠 Step 2: Generate outline using Gemini
     model = get_model()
     response_model = get_presentation_outline_model_with_n_slides(n_slides)
     client = LLMClient()
@@ -107,7 +113,7 @@ async def generate_ppt_outline(
         async for chunk in client.stream_structured(
             model=model,
             messages=get_messages(
-                content,
+                cleaned_content,
                 n_slides,
                 language,
                 additional_context,
@@ -124,7 +130,7 @@ async def generate_ppt_outline(
                 else None
             ),
         ):
-            # ✅ If chunk contains slides, attach icons
+            # ✅ Step 3: If chunk contains slides, attach icons
             if isinstance(chunk, dict) and "slides" in chunk:
                 slides = chunk["slides"]
                 for slide in slides:
@@ -136,4 +142,3 @@ async def generate_ppt_outline(
 
     except Exception as e:
         yield handle_llm_client_exceptions(e)
-
