@@ -11,7 +11,8 @@ from api.v1.webhook.router import API_V1_WEBHOOK_ROUTER
 from api.v1.mock.router import API_V1_MOCK_ROUTER
 
 # 👇 Import the presentation generator
-from api.v1.ppt.presentation import generate_presentation
+from api.v1.ppt.endpoints.presentation import generate_presentation
+
 
 
 # ---------------------------------------------------------------- #
