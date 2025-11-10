@@ -1,60 +1,51 @@
 FROM python:3.11-slim-bookworm
 
-# Install system dependencies
+# Install required system dependencies
 RUN apt-get update && apt-get install -y \
     nginx \
     curl \
     libreoffice \
     fontconfig \
     chromium \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    build-essential \
+    nodejs npm \
+    && apt-get clean
 
-# Install Node.js 20 using NodeSource
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Create a working directory
-WORKDIR /app  
+# Create working directory
+WORKDIR /app
 
 # Set environment variables
 ENV APP_DATA_DIRECTORY=/app_data
 ENV TEMP_DIRECTORY=/tmp/presenton
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PYTHONUNBUFFERED=1
 
-# Install Ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
+# Install Ollama (optional, safe to keep)
+RUN curl -fsSL https://ollama.com/install.sh | sh || true
 
-# Install dependencies for FastAPI (chromadb removed ✅)
+# Copy FastAPI files first
+COPY servers/fastapi/ /app/servers/fastapi/
+COPY start.js LICENSE NOTICE ./
+
+# Install Python dependencies (no chromadb)
 RUN pip install --no-cache-dir \
-    aiohttp aiomysql aiosqlite asyncpg fastapi[standard] \
-    pathvalidate pdfplumber sqlmodel \
-    anthropic google-genai openai fastmcp dirtyjson \
+    aiohttp aiomysql aiosqlite asyncpg fastapi[standard] sqlmodel \
+    anthropic google-generativeai openai fastmcp dirtyjson pdfplumber pathvalidate \
     docling --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Install dependencies for Next.js
+# Install Node.js dependencies
 WORKDIR /app/servers/nextjs
-COPY servers/nextjs/package.json servers/nextjs/package-lock.json ./
-RUN npm ci
+COPY servers/nextjs/package*.json ./
+RUN npm install
 
-# Copy Next.js app
+# Build Next.js app
 COPY servers/nextjs/ ./
-
-# Build the Next.js app
 RUN npm run build
 
-# Move back to main app directory
 WORKDIR /app
-
-# Copy FastAPI backend files
-COPY servers/fastapi/ ./servers/fastapi/
-COPY start.js LICENSE NOTICE ./
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Expose HTTP port
 EXPOSE 80
-
-# Start both servers
-CMD ["node", "/app/start.js"]
+CMD ["node", "start.js"]
