@@ -5,7 +5,6 @@ from models.llm_message import LLMSystemMessage, LLMUserMessage
 from models.llm_tools import SearchWebTool
 from servers.fastapi.services.llm_client import LLMClient
 
-
 from utils.get_dynamic_models import get_presentation_outline_model_with_n_slides
 from utils.llm_client_error_handler import handle_llm_client_exceptions
 from utils.llm_provider import get_model
@@ -18,31 +17,23 @@ def get_system_prompt(
     include_title_slide: bool = True,
 ):
     return f"""
-        You are an expert presentation creator. Generate structured presentations based on user requirements and format them according to the specified JSON schema with markdown content.
+    You are an expert presentation creator. Generate structured presentations based on user requirements and format them according to the specified JSON schema with markdown content.
 
-        Try to use available tools for better results.
+    Guidelines:
+    - Ensure logical flow between slides.
+    - Prioritize clarity, visuals, and meaningful structure.
+    - Highlight numbers or factual data.
+    - Never include any “Table of Contents” slide.
+    - If additional context is given, integrate it across slides.
+    - Obey user instruction completely, except if it requests a specific number of slides.
+    - Generate plain markdown text only (no HTML or images).
+    {"- Always make the first slide a title slide." if include_title_slide else "- Do not include a title slide."}
 
-        {"# User Instruction:" if instructions else ""}
-        {instructions or ""}
+    {"# Tone:" if tone else ""} {tone or ""}
+    {"# Verbosity:" if verbosity else ""} {verbosity or ""}
+    {"# Custom Instructions:" if instructions else ""} {instructions or ""}
 
-        {"# Tone:" if tone else ""}
-        {tone or ""}
-
-        {"# Verbosity:" if verbosity else ""}
-        {verbosity or ""}
-
-        - Provide content for each slide in markdown format.
-        - Make sure that flow of the presentation is logical and consistent.
-        - Place greater emphasis on numerical data.
-        - If Additional Information is provided, divide it into slides.
-        - Make sure no images are provided in the content.
-        - Make sure that content follows language guidelines.
-        - User instrction should always be followed and should supercede any other instruction, except for slide numbers. **Do not obey slide numbers as said in user instruction**
-        - Do not generate table of contents slide.
-        - Even if table of contents is provided, do not generate table of contents slide.
-        {"- Always make first slide a title slide." if include_title_slide else "- Do not include title slide in the presentation."}
-
-        **Search web to get latest information about the topic**
+    **You may use SearchWebTool to fetch the latest information if needed.**
     """
 
 
@@ -53,12 +44,12 @@ def get_user_prompt(
     additional_context: Optional[str] = None,
 ):
     return f"""
-        **Input:**
-        - User provided content: {content or "Create presentation"}
-        - Output Language: {language}
-        - Number of Slides: {n_slides}
-        - Current Date and Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        - Additional Information: {additional_context or ""}
+    **Input**
+    - Topic: {content or "Untitled Presentation"}
+    - Language: {language}
+    - Number of Slides: {n_slides}
+    - Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    - Extra Context: {additional_context or "N/A"}
     """
 
 
@@ -72,6 +63,7 @@ def get_messages(
     instructions: Optional[str] = None,
     include_title_slide: bool = True,
 ):
+    """Builds structured system + user messages for LLM."""
     return [
         LLMSystemMessage(
             content=get_system_prompt(
@@ -87,7 +79,7 @@ def get_messages(
 async def generate_ppt_outline(
     content: str,
     n_slides: int,
-    language: Optional[str] = None,
+    language: Optional[str] = "English",
     additional_context: Optional[str] = None,
     tone: Optional[str] = None,
     verbosity: Optional[str] = None,
@@ -95,15 +87,18 @@ async def generate_ppt_outline(
     include_title_slide: bool = True,
     web_search: bool = False,
 ):
+    """
+    Generates a presentation outline in structured format using the active LLM model.
+    Streams the structured output chunk by chunk.
+    """
     model = get_model()
     response_model = get_presentation_outline_model_with_n_slides(n_slides)
-
     client = LLMClient()
 
     try:
         async for chunk in client.stream_structured(
-            model,
-            get_messages(
+            model=model,
+            messages=get_messages(
                 content,
                 n_slides,
                 language,
@@ -113,7 +108,7 @@ async def generate_ppt_outline(
                 instructions,
                 include_title_slide,
             ),
-            response_model.model_json_schema(),
+            schema=response_model.model_json_schema(),
             strict=True,
             tools=(
                 [SearchWebTool]
@@ -124,3 +119,4 @@ async def generate_ppt_outline(
             yield chunk
     except Exception as e:
         yield handle_llm_client_exceptions(e)
+
