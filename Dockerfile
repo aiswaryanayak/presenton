@@ -25,7 +25,7 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Install Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Install dependencies for FastAPI (removed chromadb ✅)
+# Install dependencies for FastAPI (chromadb removed ✅)
 RUN pip install --no-cache-dir \
     aiohttp aiomysql aiosqlite asyncpg fastapi[standard] \
     pathvalidate pdfplumber sqlmodel \
@@ -43,10 +43,10 @@ COPY servers/nextjs/ ./
 # Build the Next.js app
 RUN npm run build
 
-# Go back to main directory
+# Move back to main app directory
 WORKDIR /app
 
-# Copy FastAPI backend
+# Copy FastAPI backend files
 COPY servers/fastapi/ ./servers/fastapi/
 COPY start.js LICENSE NOTICE ./
 
@@ -58,4 +58,3 @@ EXPOSE 80
 
 # Start both servers
 CMD ["node", "/app/start.js"]
-
