@@ -16,7 +16,8 @@ from google.ai.generativelanguage_v1beta.types import (
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
 )
-from google.generativeai.types import GenerateContentConfig
+from google.ai.generativelanguage_v1beta.types import GenerateContentConfig
+
 
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage
