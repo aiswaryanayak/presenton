@@ -82,3 +82,52 @@ from utils.schema_utils import (
     flatten_json_schema,
     remove_titles_from_schema,
 )
+# all your imports here
+from utils.schema_utils import (
+    ensure_strict_json_schema,
+    flatten_json_schema,
+    remove_titles_from_schema,
+)
+
+# ==========================================================
+# ✅ Minimal LLMClient stub (prevents ImportError)
+# ==========================================================
+class LLMClient:
+    """
+    A lightweight placeholder for the main LLM client handler.
+    This version avoids import errors and can be expanded later
+    to integrate Google, OpenAI, or Anthropic providers.
+    """
+    def __init__(self):
+        # Initialize API keys
+        self.google_api_key = get_google_api_key_env()
+        self.openai_api_key = get_openai_api_key_env()
+        self.anthropic_api_key = get_anthropic_api_key_env()
+
+    async def generate(self, prompt: str, provider: str = "google"):
+        """
+        Basic placeholder method for text generation.
+        """
+        if provider == "google":
+            genai.configure(api_key=self.google_api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            return response.text
+        elif provider == "openai":
+            client = AsyncOpenAI(api_key=self.openai_api_key)
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content
+        elif provider == "anthropic":
+            client = AsyncAnthropic(api_key=self.anthropic_api_key)
+            response = await client.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+
