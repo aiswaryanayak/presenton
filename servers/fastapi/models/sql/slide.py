@@ -1,11 +1,12 @@
 from typing import Optional
 import uuid
-from sqlalchemy import ForeignKey
-from sqlmodel import Field, Column, JSON, SQLModel
+from sqlalchemy import ForeignKey, Column, JSON
+from sqlmodel import Field, SQLModel
 
 
 class SlideModel(SQLModel, table=True):
     __tablename__ = "slides"
+    __table_args__ = {"extend_existing": True}  # ✅ Prevent duplicate table registration
 
     id: uuid.UUID = Field(primary_key=True, default_factory=uuid.uuid4)
     presentation: uuid.UUID = Field(
@@ -30,3 +31,4 @@ class SlideModel(SQLModel, table=True):
             content=content or self.content,
             properties=self.properties,
         )
+
