@@ -10,11 +10,14 @@ def get_database_url_env():
 
 
 def get_app_data_directory_env():
-    return os.getenv("APP_DATA_DIRECTORY")
+    # ✅ Default to a writable directory on Render
+    # Render cannot write to root (/) paths like /app_data,
+    # so we use a subdirectory inside the project path which is writable.
+    return os.getenv("APP_DATA_DIRECTORY", "/opt/render/project/src/app_data")
 
 
 def get_temp_directory_env():
-    return os.getenv("TEMP_DIRECTORY")
+    return os.getenv("TEMP_DIRECTORY", "/tmp/presenton")
 
 
 def get_user_config_path_env():
@@ -95,3 +98,4 @@ def get_extended_reasoning_env():
 
 def get_web_grounding_env():
     return os.getenv("WEB_GROUNDING")
+
