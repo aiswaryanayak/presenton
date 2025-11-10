@@ -1,3 +1,4 @@
+# servers/fastapi/api/v1/ppt/endpoints/presentation.py
 import asyncio
 from datetime import datetime
 import json
@@ -12,65 +13,69 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-from constants.presentation import DEFAULT_TEMPLATES
-from enums.webhook_event import WebhookEvent
-from models.api_error_model import APIErrorModel
-from models.generate_presentation_request import GeneratePresentationRequest
-from models.presentation_and_path import PresentationPathAndEditPath
-from models.presentation_from_template import EditPresentationRequest
-from models.presentation_outline_model import (
+import uuid
+
+# Internal constants / enums / models
+from servers.fastapi.constants.presentation import DEFAULT_TEMPLATES
+from servers.fastapi.enums.webhook_event import WebhookEvent
+from servers.fastapi.models.api_error_model import APIErrorModel
+from servers.fastapi.models.generate_presentation_request import GeneratePresentationRequest
+from servers.fastapi.models.presentation_and_path import PresentationPathAndEditPath
+from servers.fastapi.models.presentation_from_template import EditPresentationRequest
+from servers.fastapi.models.presentation_outline_model import (
     PresentationOutlineModel,
     SlideOutlineModel,
 )
-from enums.tone import Tone
-from enums.verbosity import Verbosity
-from models.pptx_models import PptxPresentationModel
-from models.presentation_layout import PresentationLayoutModel
-from models.presentation_structure_model import PresentationStructureModel
-from models.presentation_with_slides import (
-    PresentationWithSlides,
-)
-from models.sql.template import TemplateModel
+from servers.fastapi.enums.tone import Tone
+from servers.fastapi.enums.verbosity import Verbosity
+from servers.fastapi.models.pptx_models import PptxPresentationModel
+from servers.fastapi.models.presentation_layout import PresentationLayoutModel
+from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
+from servers.fastapi.models.presentation_with_slides import PresentationWithSlides
+from servers.fastapi.models.sql.template import TemplateModel
 
-from services.documents_loader import DocumentsLoader
-from services.webhook_service import WebhookService
-from utils.get_layout_by_name import get_layout_by_name
-from services.image_generation_service import ImageGenerationService
-from utils.dict_utils import deep_update
-from utils.export_utils import export_presentation
-from utils.llm_calls.generate_presentation_outlines import generate_ppt_outline
-from models.sql.slide import SlideModel
-from models.sse_response import SSECompleteResponse, SSEErrorResponse, SSEResponse
+# Services and utils (absolute imports to avoid top-level-relative import issues)
+from servers.fastapi.services.documents_loader import DocumentsLoader
+from servers.fastapi.services.webhook_service import WebhookService
+from servers.fastapi.utils.get_layout_by_name import get_layout_by_name
+from servers.fastapi.services.image_generation_service import ImageGenerationService
+from servers.fastapi.utils.dict_utils import deep_update
+from servers.fastapi.utils.export_utils import export_presentation
+from servers.fastapi.utils.llm_calls.generate_presentation_outlines import generate_ppt_outline
+from servers.fastapi.models.sql.slide import SlideModel
+from servers.fastapi.models.sse_response import SSECompleteResponse, SSEErrorResponse, SSEResponse
 
-from services.database import get_async_session
-from services.temp_file_service import TEMP_FILE_SERVICE
-from services.concurrent_service import CONCURRENT_SERVICE
-from models.sql.presentation import PresentationModel
-from services.pptx_presentation_creator import PptxPresentationCreator
-from models.sql.async_presentation_generation_status import (
+from servers.fastapi.services.database import get_async_session
+from servers.fastapi.services.temp_file_service import TEMP_FILE_SERVICE
+from servers.fastapi.services.concurrent_service import CONCURRENT_SERVICE
+from servers.fastapi.models.sql.presentation import PresentationModel
+from servers.fastapi.services.pptx_presentation_creator import PptxPresentationCreator
+from servers.fastapi.models.sql.async_presentation_generation_status import (
     AsyncPresentationGenerationTaskModel,
 )
-from utils.asset_directory_utils import get_exports_directory, get_images_directory
-from utils.llm_calls.generate_presentation_structure import (
+from servers.fastapi.utils.asset_directory_utils import get_exports_directory, get_images_directory
+from servers.fastapi.utils.llm_calls.generate_presentation_structure import (
     generate_presentation_structure,
 )
-from utils.llm_calls.generate_slide_content import (
+from servers.fastapi.utils.llm_calls.generate_slide_content import (
     get_slide_content_from_type_and_outline,
 )
-from utils.ppt_utils import (
+from servers.fastapi.utils.ppt_utils import (
     get_presentation_title_from_outlines,
     select_toc_or_list_slide_layout_index,
 )
-from utils.process_slides import (
+from servers.fastapi.utils.process_slides import (
     process_slide_add_placeholder_assets,
     process_slide_and_fetch_assets,
 )
-import uuid
-
+from servers.fastapi.constants.presentation import DEFAULT_TEMPLATES
 
 PRESENTATION_ROUTER = APIRouter(prefix="/presentation", tags=["Presentation"])
 
 
+# -------------------------
+# Basic CRUD & Listing
+# -------------------------
 @PRESENTATION_ROUTER.get("/all", response_model=List[PresentationWithSlides])
 async def get_all_presentations(sql_session: AsyncSession = Depends(get_async_session)):
     presentations_with_slides = []
@@ -126,6 +131,9 @@ async def delete_presentation(
     await sql_session.commit()
 
 
+# -------------------------
+# Create & Prepare
+# -------------------------
 @PRESENTATION_ROUTER.post("/create", response_model=PresentationModel)
 async def create_presentation(
     content: Annotated[str, Body()],
@@ -255,6 +263,9 @@ async def prepare_presentation(
     return presentation
 
 
+# -------------------------
+# Streaming endpoint used by UI for progressive slide generation
+# -------------------------
 @PRESENTATION_ROUTER.get("/stream/{id}", response_model=PresentationWithSlides)
 async def stream_presentation(
     id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)
@@ -280,10 +291,10 @@ async def stream_presentation(
         layout = presentation.get_layout()
         outline = presentation.get_presentation_outline()
 
-        # These tasks will be gathered and awaited after all slides are generated
         async_assets_generation_tasks = []
 
         slides: List[SlideModel] = []
+        # begin SSE stream - UI expects chunks of slides
         yield SSEResponse(
             event="response",
             data=json.dumps({"type": "chunk", "chunk": '{ "slides": [ '}),
@@ -337,7 +348,7 @@ async def stream_presentation(
         for assets_list in generated_assets_lists:
             generated_assets.extend(assets_list)
 
-        # Moved this here to make sure new slides are generated before deleting the old ones
+        # Replace old slides atomically
         await sql_session.execute(
             delete(SlideModel).where(SlideModel.presentation == id)
         )
@@ -361,6 +372,9 @@ async def stream_presentation(
     return StreamingResponse(inner(), media_type="text/event-stream")
 
 
+# -------------------------
+# Update endpoints
+# -------------------------
 @PRESENTATION_ROUTER.patch("/update", response_model=PresentationWithSlides)
 async def update_presentation(
     id: Annotated[uuid.UUID, Body()],
@@ -401,6 +415,9 @@ async def update_presentation(
     )
 
 
+# -------------------------
+# Export endpoints
+# -------------------------
 @PRESENTATION_ROUTER.post("/export/pptx", response_model=str)
 async def export_presentation_as_pptx(
     pptx_model: Annotated[PptxPresentationModel, Body()],
@@ -444,6 +461,9 @@ async def export_presentation_as_pptx_or_pdf(
     )
 
 
+# -------------------------
+# Helpers for validation & handler
+# -------------------------
 async def check_if_api_request_is_valid(
     request: GeneratePresentationRequest,
     sql_session: AsyncSession = Depends(get_async_session),
@@ -487,6 +507,9 @@ async def check_if_api_request_is_valid(
     return (presentation_id,)
 
 
+# -------------------------
+# Core presentation generator
+# -------------------------
 async def generate_presentation_handler(
     request: GeneratePresentationRequest,
     presentation_id: uuid.UUID,
@@ -532,6 +555,11 @@ async def generate_presentation_handler(
                     (request.n_slides - needed_toc_count) / 10
                 )
 
+            # -------------------------
+            # New robust streaming handling:
+            # generate_ppt_outline can yield either dicts (structured) or JSON text chunks.
+            # We accept either, accumulate into a single JSON string, then parse.
+            # -------------------------
             presentation_outlines_text = ""
             async for chunk in generate_ppt_outline(
                 request.content,
@@ -544,22 +572,42 @@ async def generate_presentation_handler(
                 request.include_title_slide,
                 request.web_search,
             ):
-
+                # If the generator raises/returns an HTTPException, propagate
                 if isinstance(chunk, HTTPException):
                     raise chunk
 
-                presentation_outlines_text += chunk
+                # Accept dict yielded by LLM streaming helper
+                if isinstance(chunk, dict):
+                    # Convert dict chunk into JSON string and append
+                    presentation_outlines_text += json.dumps(chunk)
+                # If chunk is a raw string (older implementations)
+                elif isinstance(chunk, str):
+                    presentation_outlines_text += chunk
+                else:
+                    # Fallback: try to stringify as JSON
+                    try:
+                        presentation_outlines_text += json.dumps(chunk)
+                    except Exception:
+                        presentation_outlines_text += str(chunk)
 
+            # Now parse the assembled JSON
             try:
-                presentation_outlines_json = dict(
-                    dirtyjson.loads(presentation_outlines_text)
-                )
+                # Some LLMs may stream with extra characters so we try to normalize:
+                presentation_outlines_json = None
+                # If it's already valid JSON
+                try:
+                    presentation_outlines_json = json.loads(presentation_outlines_text)
+                except Exception:
+                    # Some generators produce directly the inner object (e.g. {"slides":[...]})
+                    # Try to clean up leading/trailing non-json and use dirtyjson as fallback
+                    presentation_outlines_json = dict(dirtyjson.loads(presentation_outlines_text))
             except Exception as e:
                 traceback.print_exc()
                 raise HTTPException(
                     status_code=400,
                     detail="Failed to generate presentation outlines. Please try again.",
                 )
+
             presentation_outlines = PresentationOutlineModel(
                 **presentation_outlines_json
             )
@@ -595,10 +643,9 @@ async def generate_presentation_handler(
         else:
             presentation_structure: PresentationStructureModel = (
                 await generate_presentation_structure(
-                    presentation_outlines,
-                    layout_model,
-                    request.instructions,
-                    using_slides_markdown,
+                    presentation_outline=presentation_outlines,
+                    presentation_layout=layout_model,
+                    instructions=request.instructions,
                 )
             )
 
@@ -801,6 +848,9 @@ async def generate_presentation_handler(
             raise e
 
 
+# -------------------------
+# Public endpoints: sync + async generation
+# -------------------------
 @PRESENTATION_ROUTER.post("/generate", response_model=PresentationPathAndEditPath)
 async def generate_presentation_sync(
     request: GeneratePresentationRequest,
@@ -852,6 +902,9 @@ async def generate_presentation_async(
         raise e
 
 
+# -------------------------
+# Status / Edit / Derive
+# -------------------------
 @PRESENTATION_ROUTER.get(
     "/status/{id}", response_model=AsyncPresentationGenerationTaskModel
 )
@@ -949,3 +1002,4 @@ async def derive_presentation_from_existing_one(
         **presentation_and_path.model_dump(),
         edit_path=f"/presentation?id={new_presentation.id}",
     )
+
