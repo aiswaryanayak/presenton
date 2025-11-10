@@ -11,14 +11,18 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenA
 
 # ✅ Stable Gemini import for google-generativeai 0.8.5
 import google.generativeai as genai
+
 from google.ai.generativelanguage_v1beta.types import (
     Content as GoogleContent,
     Part as GoogleContentPart,
     Tool as GoogleTool,
     ToolConfig as GoogleToolConfig,
     FunctionCallingConfig as GoogleFunctionCallingConfig,
+    FunctionCallingConfigMode as GoogleFunctionCallingConfigMode,  # safe to include
 )
-from google.ai.generativelanguage import GenerateContentConfig
+
+# ✅ Correct location for GenerateContentConfig
+from google.generativeai.types import GenerateContentConfig
 
 
 
