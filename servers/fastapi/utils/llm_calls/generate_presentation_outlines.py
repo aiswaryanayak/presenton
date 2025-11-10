@@ -3,7 +3,8 @@ from typing import Optional
 
 from models.llm_message import LLMSystemMessage, LLMUserMessage
 from models.llm_tools import SearchWebTool
-from ...services.llm_client import LLMClient
+from servers.fastapi.services.llm_client import LLMClient
+
 
 from utils.get_dynamic_models import get_presentation_outline_model_with_n_slides
 from utils.llm_client_error_handler import handle_llm_client_exceptions
