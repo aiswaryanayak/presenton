@@ -14,10 +14,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create working directory
-WORKDIR /app
+# Create a working directory
+WORKDIR /app  
 
-# Environment variables
+# Set environment variables
 ENV APP_DATA_DIRECTORY=/app_data
 ENV TEMP_DIRECTORY=/tmp/presenton
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -25,7 +25,7 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Install Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Install Python dependencies
+# Install dependencies for FastAPI (removed chromadb ✅)
 RUN pip install --no-cache-dir \
     aiohttp aiomysql aiosqlite asyncpg fastapi[standard] \
     pathvalidate pdfplumber sqlmodel \
@@ -37,14 +37,16 @@ WORKDIR /app/servers/nextjs
 COPY servers/nextjs/package.json servers/nextjs/package-lock.json ./
 RUN npm ci
 
-# Copy Next.js app source
+# Copy Next.js app
 COPY servers/nextjs/ ./
 
 # Build the Next.js app
 RUN npm run build
 
-# Copy FastAPI backend and root files
+# Go back to main directory
 WORKDIR /app
+
+# Copy FastAPI backend
 COPY servers/fastapi/ ./servers/fastapi/
 COPY start.js LICENSE NOTICE ./
 
@@ -54,5 +56,6 @@ COPY nginx.conf /etc/nginx/nginx.conf
 # Expose HTTP port
 EXPOSE 80
 
-# Start servers
+# Start both servers
 CMD ["node", "/app/start.js"]
+
