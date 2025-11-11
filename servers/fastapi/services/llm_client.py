@@ -27,6 +27,7 @@ from utils.get_env import (
     get_openai_api_key_env,
 )
 
+
 # ===============================================================
 # ✅ UNIVERSAL LLM CLIENT — Gemini 2.0-exp + OpenAI + Anthropic
 # ===============================================================
@@ -34,7 +35,7 @@ class LLMClient:
     """
     Unified LLM client for Presenton.
     Handles Gemini 2.0-exp by default, plus OpenAI & Anthropic.
-    Provides a fully-compatible stream_structured() handler.
+    Fully compatible with all message formats and structured streaming.
     """
 
     def __init__(self):
@@ -122,7 +123,7 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"LLM API error: {e}")
 
     # ===========================================================
-    # ⚡ STREAM_STRUCTURED — final universal compatibility
+    # ⚡ STREAM_STRUCTURED — FINAL UNIVERSAL FIX
     # ===========================================================
     async def stream_structured(self, *args, **kwargs):
         """
@@ -131,6 +132,7 @@ class LLMClient:
           - stream_structured("prompt text")
           - stream_structured(messages=[{"role": "user", "content": "..."}])
           - stream_structured(messages=[{"content": [{"text": "..."}]}])
+          - stream_structured(messages=[{"content": [{"parts": [{"text": "..."}]}]}])
           - stream_structured(inputs="...") or data="..."
         """
         prompt = None
@@ -149,46 +151,71 @@ class LLMClient:
                 or kwargs.get("inputs")
             )
 
-        # 3️⃣ Handle OpenAI/Anthropic-like message formats
+        # 3️⃣ Handle OpenAI/Anthropic/Gemini-like nested messages
         if not prompt and "messages" in kwargs:
             try:
                 messages = kwargs["messages"]
                 if isinstance(messages, list) and len(messages) > 0:
                     for m in reversed(messages):
-                        # Case A: OpenAI style
+                        # Case A: role=user with text
                         if isinstance(m, dict) and m.get("role") == "user":
                             c = m.get("content")
-                            if isinstance(c, list):
-                                # [{"text": "..."}]
-                                text_parts = [
-                                    p.get("text") for p in c if isinstance(p, dict) and p.get("text")
-                                ]
-                                if text_parts:
-                                    prompt = " ".join(text_parts)
-                                    break
-                            elif isinstance(c, str):
+
+                            # direct string
+                            if isinstance(c, str):
                                 prompt = c
                                 break
-                        # Case B: Anthropic style (no role)
+
+                            # list of dicts
+                            if isinstance(c, list):
+                                for part in c:
+                                    # direct text part
+                                    if isinstance(part, dict) and "text" in part:
+                                        prompt = part["text"]
+                                        break
+                                    # nested parts (Gemini 2.0 style)
+                                    if (
+                                        isinstance(part, dict)
+                                        and "parts" in part
+                                        and isinstance(part["parts"], list)
+                                    ):
+                                        for p in part["parts"]:
+                                            if isinstance(p, dict) and "text" in p:
+                                                prompt = p["text"]
+                                                break
+                                    if prompt:
+                                        break
+                            if prompt:
+                                break
+
+                        # Case B: No role but content with text/parts
                         if not prompt and isinstance(m, dict) and "content" in m:
                             c = m["content"]
                             if isinstance(c, list):
                                 for part in c:
-                                    if isinstance(part, dict) and "text" in part:
-                                        prompt = part["text"]
+                                    if isinstance(part, dict):
+                                        if "text" in part:
+                                            prompt = part["text"]
+                                            break
+                                        if "parts" in part and isinstance(part["parts"], list):
+                                            for p in part["parts"]:
+                                                if isinstance(p, dict) and "text" in p:
+                                                    prompt = p["text"]
+                                                    break
+                                    if prompt:
                                         break
                             elif isinstance(c, str):
                                 prompt = c
                             if prompt:
                                 break
-            except Exception:
-                pass
+            except Exception as e:
+                print("⚠️ stream_structured parsing error:", e)
 
-        # 4️⃣ Still missing? fail cleanly
+        # 4️⃣ Still missing prompt → fail cleanly
         if not prompt:
             raise HTTPException(
                 status_code=400,
-                detail="LLMClient.stream_structured() missing 'prompt' or valid messages[].content[].text",
+                detail="LLMClient.stream_structured() missing 'prompt' or valid messages[].content[].parts[].text",
             )
 
         # 5️⃣ Extract model/provider
