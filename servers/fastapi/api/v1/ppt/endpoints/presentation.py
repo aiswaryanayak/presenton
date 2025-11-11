@@ -318,7 +318,9 @@ async def generate_presentation_sync(
     return await generate_presentation_handler(request, presentation_id, None, sql_session)
 
 
-# ✅ Gemini-compatible wrapper
+# -------------------------
+# Gemini-compatible wrapper
+# -------------------------
 async def generate_presentation_from_gemini(
     content: str,
     n_slides: int = 10,
@@ -332,7 +334,20 @@ async def generate_presentation_from_gemini(
     include_table_of_contents: bool = False,
     web_search: bool = False,
 ):
-    from servers.fastapi.services.database import get_async_session
+    """
+    Wrapper that accepts simple kwargs (as your /api/v1/ppt/from_gemini endpoint passes)
+    and calls the primary internal pipeline so the output is a full Presenton-styled deck.
+    """
+    # Normalize enum fields
+    try:
+        tone_enum = Tone(tone) if not isinstance(tone, Tone) else tone
+    except Exception:
+        tone_enum = Tone.DEFAULT
+
+    try:
+        verbosity_enum = Verbosity(verbosity) if not isinstance(verbosity, Verbosity) else verbosity
+    except Exception:
+        verbosity_enum = Verbosity.STANDARD
 
     request = GeneratePresentationRequest(
         content=content,
@@ -340,20 +355,21 @@ async def generate_presentation_from_gemini(
         export_as=export_as,
         language=language,
         template=template,
-        tone=tone,
-        verbosity=verbosity,
+        tone=tone_enum,
+        verbosity=verbosity_enum,
         instructions=instructions,
         include_title_slide=include_title_slide,
         include_table_of_contents=include_table_of_contents,
         web_search=web_search,
     )
 
+    # Acquire a DB session and call the internal handler with a new presentation id
     async for session in get_async_session():
         presentation_id = uuid.uuid4()
         response = await generate_presentation_handler(request, presentation_id, None, session)
         return response
 
 
-# ✅ Compatibility alias for Gemini route
+# ✅ Compatibility alias (so `from ... import generate_presentation` works)
 generate_presentation = generate_presentation_from_gemini
 
