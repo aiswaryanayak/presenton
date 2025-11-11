@@ -114,3 +114,4 @@ class LLMClient:
         except Exception as e:
             print("⚠️ stream_structured fallback failed:", e)
             raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
+
