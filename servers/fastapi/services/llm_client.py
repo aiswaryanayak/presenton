@@ -123,20 +123,13 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"LLM API error: {e}")
 
     # ===========================================================
-    # ⚡ STREAM_STRUCTURED — PERMANENT FIX + DEBUG
+    # ⚡ STREAM_STRUCTURED — SAFE & DEBUG-FRIENDLY
     # ===========================================================
     async def stream_structured(self, *args, **kwargs):
-        """
-        Handles all input styles and never fails:
-          - prompt="..."
-          - stream_structured("prompt text")
-          - nested messages of any depth
-        """
-        print("🔍 DEBUG STREAM INPUT:", kwargs)  # 💡 To inspect payload
+        print("🔍 DEBUG STREAM INPUT:", kwargs)
 
         prompt = None
 
-        # --- Recursive extractor ---
         def extract_text(obj):
             """Recursively search for any 'text' key or string."""
             if isinstance(obj, dict):
@@ -157,11 +150,9 @@ class LLMClient:
                 return obj
             return None
 
-        # 1️⃣ Direct positional argument
         if len(args) > 0 and isinstance(args[0], str):
             prompt = args[0]
 
-        # 2️⃣ Common named parameters
         if not prompt:
             prompt = (
                 kwargs.get("prompt")
@@ -171,26 +162,21 @@ class LLMClient:
                 or kwargs.get("inputs")
             )
 
-        # 3️⃣ Recursively search all message structures
         if not prompt and "messages" in kwargs:
             prompt = extract_text(kwargs["messages"])
 
-        # 4️⃣ Final fallback — search entire kwargs recursively
         if not prompt:
             prompt = extract_text(kwargs)
 
-        # 5️⃣ Still missing → fail cleanly
         if not prompt or not isinstance(prompt, str) or not prompt.strip():
             raise HTTPException(
                 status_code=400,
                 detail="LLMClient.stream_structured() missing 'prompt' or any string content (checked deeply)",
             )
 
-        # 6️⃣ Extract model/provider
         model = kwargs.get("model") or kwargs.get("model_name")
         provider = kwargs.get("provider") or kwargs.get("llm_provider") or "google"
 
-        # 7️⃣ Run generation
         try:
             result = await self.generate(prompt, provider=provider, model=model)
             if isinstance(result, dict):
@@ -200,8 +186,9 @@ class LLMClient:
         except Exception as e:
             print("⚠️ stream_structured failed:", e)
             raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
-                # ===========================================================
-    # 🧩 GENERATE_STRUCTURED — used by Presenton everywhere
+
+    # ===========================================================
+    # 🧩 GENERATE_STRUCTURED — REQUIRED BY PRESENTON
     # ===========================================================
     async def generate_structured(
         self,
@@ -212,14 +199,13 @@ class LLMClient:
         provider: Optional[str] = "google",
     ):
         """
-        Generates structured (JSON) responses for outlines, slides, layouts, etc.
-        Works seamlessly for Gemini 2.0-exp and OpenAI-compatible models.
+        Generate structured JSON responses for slide layouts, outlines, etc.
+        Compatible with Gemini 2.0-exp, GPT-4o, and Claude 3 APIs.
         """
-
         provider = self._normalize_provider(provider)
 
         try:
-            # === GEMINI 2.0 / GOOGLE ===
+            # === GEMINI ===
             if provider.startswith("google"):
                 if not genai:
                     raise RuntimeError("google-generativeai not installed.")
@@ -227,30 +213,25 @@ class LLMClient:
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
 
-                # Combine messages into one text block for Gemini
                 prompt_text = "\n".join(
                     [m.content if hasattr(m, "content") else str(m) for m in messages]
                 )
 
-                # Generate structured JSON
                 response = await asyncio.to_thread(
                     gem_model.generate_content,
-                    prompt_text + "\n\nReturn valid JSON strictly matching this schema:\n"
-                    + str(response_format),
+                    f"{prompt_text}\n\nReturn valid JSON strictly matching this schema:\n{response_format}",
                 )
 
-                import json
+                import json, re
                 try:
                     return json.loads(response.text)
                 except Exception:
-                    # Fallback — Gemini sometimes adds commentary before JSON
-                    import re
                     match = re.search(r"\{.*\}", response.text, re.DOTALL)
                     if match:
                         return json.loads(match.group(0))
                     if strict:
-                        raise ValueError("Gemini did not return valid JSON")
-                    return {"error": "unstructured response", "raw": response.text}
+                        raise ValueError("Gemini returned invalid JSON.")
+                    return {"raw": response.text}
 
             # === OPENAI ===
             elif provider.startswith("openai"):
@@ -262,6 +243,7 @@ class LLMClient:
                     messages=[{"role": "user", "content": str(messages)}],
                     response_format={"type": "json_schema", "json_schema": response_format},
                 )
+
                 import json
                 return json.loads(resp.choices[0].message.content)
 
@@ -275,6 +257,7 @@ class LLMClient:
                     max_tokens=1500,
                     messages=[{"role": "user", "content": str(messages)}],
                 )
+
                 import json
                 try:
                     return json.loads(resp.content[0].text)
@@ -288,6 +271,10 @@ class LLMClient:
 
         except Exception as e:
             print(f"❌ LLMClient.generate_structured() failed: {e}")
-            raise HTTPException(status_code=500, detail=f"LLMClient.generate_structured() failed: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLMClient.generate_structured() failed: {str(e)}",
+            )
+
 
 
