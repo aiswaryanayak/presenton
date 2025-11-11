@@ -4,11 +4,12 @@ import uuid
 from sqlalchemy import JSON, Column, DateTime, String
 from sqlmodel import Boolean, Field, SQLModel
 
-# ✅ Fix: import the HybridLayout and alias it to PresentationLayoutModel
-from servers.fastapi.models.presentation_layout.hybrid import HybridLayout as PresentationLayoutModel
+# ✅ Correct fix: import your hybrid presenton layout and alias it
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import HybridPresentonLayout as PresentationLayoutModel
 from servers.fastapi.models.presentation_outline_model import PresentationOutlineModel
 from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
 from servers.fastapi.utils.datetime_utils import get_current_utc_datetime
+
 
 class PresentationModel(SQLModel, table=True):
     __tablename__ = "presentations"
