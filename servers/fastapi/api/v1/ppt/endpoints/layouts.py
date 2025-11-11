@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
 import aiohttp
 from typing import List, Any
-from utils.get_layout_by_name import get_layout_by_name
-from models.presentation_layout import PresentationLayoutModel
+from servers.fastapi.utils.get_layout_by_name import get_layout_by_name
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from fastapi import APIRouter
 
 LAYOUTS_ROUTER = APIRouter(prefix="/layouts", tags=["Layouts"])
 
