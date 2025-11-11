@@ -9,7 +9,10 @@ from api.middlewares import UserConfigEnvUpdateMiddleware
 from api.v1.ppt.router import API_V1_PPT_ROUTER
 from api.v1.webhook.router import API_V1_WEBHOOK_ROUTER
 from api.v1.mock.router import API_V1_MOCK_ROUTER
-from api.v1.ppt.endpoints.presentation import PRESENTATION_ROUTER  # ✅ fixed import
+from api.v1.ppt.endpoints.presentation import (
+    PRESENTATION_ROUTER,
+    generate_presentation_from_gemini,  # ✅ correct Gemini import
+)
 
 
 # ---------------------------------------------------------------- #
@@ -24,7 +27,7 @@ app = FastAPI(lifespan=app_lifespan)
 app.include_router(API_V1_PPT_ROUTER)
 app.include_router(API_V1_WEBHOOK_ROUTER)
 app.include_router(API_V1_MOCK_ROUTER)
-app.include_router(PRESENTATION_ROUTER)  # ✅ include main deck generation router
+app.include_router(PRESENTATION_ROUTER)
 
 
 # ---------------------------------------------------------------- #
@@ -34,7 +37,7 @@ origins = [
     "https://ai-fundraising-support.vercel.app",  # your production frontend
     "https://ai-fundraising-support.vercel.com",  # optional alt domain
     "http://localhost:3000",                      # local dev
-    "https://presenton-1h7p.onrender.com",        # backend self-origin
+    "https://presenton-1h7p.onrender.com",        # backend Render origin
 ]
 
 app.add_middleware(
@@ -53,7 +56,7 @@ app.add_middleware(UserConfigEnvUpdateMiddleware)
 
 
 # ---------------------------------------------------------------- #
-# ✅ Optional endpoint for Gemini integration (if using direct Gemini-to-deck)
+# ✅ Gemini → Deck endpoint
 # ---------------------------------------------------------------- #
 class GeminiDeckRequest(BaseModel):
     content: str
@@ -68,8 +71,8 @@ async def create_from_gemini(request: GeminiDeckRequest):
     Accepts Gemini-generated content and creates a full presentation deck.
     """
     try:
-        from api.v1.ppt.endpoints.presentation import generate_presentation
-        result = await generate_presentation(
+        # ✅ use the correct wrapper that builds the internal request model
+        result = await generate_presentation_from_gemini(
             content=request.content,
             n_slides=request.n_slides,
             export_as=request.export_as,
@@ -91,7 +94,6 @@ async def root():
         "allowed_origins": origins,
         "endpoints": [
             "/api/v1/ppt/from_gemini",
-            "/presentation/generate?link=",
+            "/presentation/generate",
         ],
     }
-
