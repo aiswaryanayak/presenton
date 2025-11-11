@@ -209,12 +209,6 @@ async def generate_presentation_handler(
             )
             total_outlines = len(request.slides_markdown)
 
-        if async_status:
-            async_status.message = f"Selecting layout for slides"
-            async_status.updated_at = datetime.now()
-            sql_session.add(async_status)
-            await sql_session.commit()
-
         layout_model = await get_layout_by_name(request.template)
         total_slide_layouts = len(layout_model.slides)
 
@@ -307,7 +301,7 @@ async def generate_presentation_handler(
             edit_path=f"/presentation?id={presentation_id}",
         )
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Presentation generation failed")
 
@@ -324,6 +318,42 @@ async def generate_presentation_sync(
     return await generate_presentation_handler(request, presentation_id, None, sql_session)
 
 
-# ✅ Compatibility alias for Gemini endpoint
-generate_presentation = generate_presentation_sync
+# ✅ Gemini-compatible wrapper
+async def generate_presentation_from_gemini(
+    content: str,
+    n_slides: int = 10,
+    export_as: str = "pptx",
+    language: str = "English",
+    template: str = "modern",
+    tone: str = "default",
+    verbosity: str = "standard",
+    instructions: str = "",
+    include_title_slide: bool = True,
+    include_table_of_contents: bool = False,
+    web_search: bool = False,
+):
+    from servers.fastapi.services.database import get_async_session
+
+    request = GeneratePresentationRequest(
+        content=content,
+        n_slides=n_slides,
+        export_as=export_as,
+        language=language,
+        template=template,
+        tone=tone,
+        verbosity=verbosity,
+        instructions=instructions,
+        include_title_slide=include_title_slide,
+        include_table_of_contents=include_table_of_contents,
+        web_search=web_search,
+    )
+
+    async for session in get_async_session():
+        presentation_id = uuid.uuid4()
+        response = await generate_presentation_handler(request, presentation_id, None, session)
+        return response
+
+
+# ✅ Compatibility alias for Gemini route
+generate_presentation = generate_presentation_from_gemini
 
