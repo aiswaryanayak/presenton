@@ -16,8 +16,9 @@ class TemplateModel(SQLModel, table=True):
     __tablename__ = "templates"
     __table_args__ = {"extend_existing": True}
 
+    # ✅ Fixed: remove index=True when using sa_column
     id: uuid.UUID = Field(primary_key=True, default_factory=uuid.uuid4)
-    name: str = Field(index=True, sa_column=Column(String, nullable=False))
+    name: str = Field(sa_column=Column(String, nullable=False, unique=True))
     description: str = Field(default="", sa_column=Column(String, nullable=True))
     layout_data: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     theme: str = Field(default="hybrid", sa_column=Column(String, nullable=False))
