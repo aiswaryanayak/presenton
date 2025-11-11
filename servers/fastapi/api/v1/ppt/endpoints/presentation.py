@@ -6,6 +6,7 @@ import math
 import os
 import random
 import traceback
+import re
 from typing import Annotated, List, Literal, Optional, Tuple, Type, Any
 import dirtyjson
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
@@ -96,6 +97,74 @@ def coerce_enum(enum_cls: Type[Any], value: Any, default: Any):
     except Exception:
         pass
     return default
+
+
+def _heuristic_create_slides_from_text(raw_text: str, n_slides_target: int) -> List[dict]:
+    """
+    Fallback heuristic: turn free-form text into `n_slides_target` slide dicts.
+    We split by major separators, then if fewer segments than needed,
+    split longer segments into multiple slides (by sentences).
+    """
+    # Normalize and remove odd markers
+    t = raw_text.strip()
+    # Remove triple-backticks or markdown wrappers if present
+    t = re.sub(r"```(?:json)?", "", t)
+    # Split by strong delimiters first: '---' or '\n\n' blocks
+    segments = [s.strip() for s in re.split(r"\n-{3,}\n|\n{2,}", t) if s.strip()]
+
+    # If nothing meaningful, use the whole text as one segment
+    if not segments:
+        segments = [t]
+
+    # If too many segments, truncate
+    if len(segments) >= n_slides_target:
+        chosen = segments[:n_slides_target]
+    else:
+        # Need more slides: attempt sentence-splitting of long segments
+        chosen = segments[:]
+        # flatten sentences from segments until we have enough slides
+        for seg in segments:
+            if len(chosen) >= n_slides_target:
+                break
+            # split sentences (naive)
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', seg) if s.strip()]
+            for s in sentences:
+                if len(chosen) >= n_slides_target:
+                    break
+                if s not in chosen:
+                    chosen.append(s)
+        # If still not enough, pad with the original text split into chunks
+        if len(chosen) < n_slides_target:
+            # split text into roughly equal slices by character length
+            chunk_size = max(100, len(t) // max(1, n_slides_target))
+            more = [t[i:i+chunk_size].strip() for i in range(0, len(t), chunk_size)]
+            for m in more:
+                if len(chosen) >= n_slides_target:
+                    break
+                if m and m not in chosen:
+                    chosen.append(m)
+        chosen = chosen[:n_slides_target]
+
+    # Convert chosen segments to slide dictionaries
+    slides = []
+    for seg in chosen:
+        # try to find a one-line header and rest content
+        lines = [l.strip() for l in seg.splitlines() if l.strip()]
+        title = lines[0] if lines else seg[:40]
+        content_lines = lines[1:] if len(lines) > 1 else []
+        # fallback: chunk segment into 3 bullet points if no explicit bullets
+        if not content_lines:
+            bullets = [s.strip() for s in re.split(r'(?<=[.!?])\s+', seg) if s.strip()]
+            bullets = bullets[:3] if bullets else [seg[:120]]
+            content_lines = bullets
+        slides.append({
+            "title": title[:120],
+            "subtitle": "",
+            "content": content_lines,
+            "visual_theme": "modern gradient, hero image or abstract illustration",
+            "speaker_notes": "Auto-generated presenter notes. Expand as needed.",
+        })
+    return slides
 
 
 # -------------------------
@@ -193,6 +262,7 @@ async def generate_presentation_handler(
                 )
 
             presentation_outlines_text = ""
+            # collect chunks from the generator (some LLM wrappers stream strings/dicts)
             async for chunk in generate_ppt_outline(
                 request.content,
                 n_slides_to_generate,
@@ -207,7 +277,11 @@ async def generate_presentation_handler(
                 if isinstance(chunk, HTTPException):
                     raise chunk
                 if isinstance(chunk, dict):
-                    presentation_outlines_text += json.dumps(chunk)
+                    # append JSON dump for dict chunks
+                    try:
+                        presentation_outlines_text += json.dumps(chunk)
+                    except Exception:
+                        presentation_outlines_text += str(chunk)
                 elif isinstance(chunk, str):
                     presentation_outlines_text += chunk
                 else:
@@ -216,20 +290,52 @@ async def generate_presentation_handler(
                     except Exception:
                         presentation_outlines_text += str(chunk)
 
+            # Attempt to parse the collected outlines robustly
+            presentation_outlines_json = None
+            parse_error = None
             try:
                 try:
                     presentation_outlines_json = json.loads(presentation_outlines_text)
                 except Exception:
+                    # try dirtyjson (tolerant)
                     presentation_outlines_json = dict(dirtyjson.loads(presentation_outlines_text))
-            except Exception:
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to generate presentation outlines. Please try again.",
-                )
+            except Exception as e:
+                parse_error = e
 
+            # If parsing failed or slides key missing, try heuristic fallbacks
+            if not isinstance(presentation_outlines_json, dict) or "slides" not in presentation_outlines_json:
+                # Log debug info for server logs
+                print("⚠️ DEBUG: presentation_outlines_json invalid or missing 'slides'.")
+                if parse_error:
+                    print("⚠️ DEBUG parse error:", repr(parse_error))
+                # Try to detect a JSON array somewhere in the text like {"slides": [...]}
+                try:
+                    # Find first { "slides": ... } occurrence via regex (best-effort)
+                    m = re.search(r'(\{.*"slides"\s*:\s*\[.*\].*?\})', presentation_outlines_text, re.DOTALL)
+                    if m:
+                        candidate = m.group(1)
+                        presentation_outlines_json = json.loads(candidate)
+                except Exception:
+                    # ignore and proceed to heuristic
+                    presentation_outlines_json = None
+
+            if not isinstance(presentation_outlines_json, dict) or "slides" not in presentation_outlines_json:
+                # Final fallback: construct slides heuristically from raw text
+                try:
+                    slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
+                    presentation_outlines_json = {"slides": slides_built}
+                    print("ℹ️ Fallback created slides from raw text (heuristic).")
+                except Exception as e:
+                    # Give up - return a clear HTTPException
+                    traceback.print_exc()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to generate presentation outlines and fallback also failed: {str(e)}",
+                    )
+
+            # At this point, we should have a dict with "slides"
             presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
-            total_outlines = n_slides_to_generate
+            total_outlines = len(presentation_outlines.slides)
 
         else:
             presentation_outlines = PresentationOutlineModel(
@@ -252,6 +358,7 @@ async def generate_presentation_handler(
                 )
             )
 
+        # Ensure presentation_structure.slides matches total_outlines length
         presentation_structure.slides = presentation_structure.slides[:total_outlines]
         for index in range(total_outlines):
             random_slide_index = random.randint(0, total_slide_layouts - 1)
@@ -371,7 +478,6 @@ async def generate_presentation_from_gemini(
     """
     Wrapper that accepts simple kwargs (as your /api/v1/ppt/from_gemini endpoint passes)
     and calls the primary internal pipeline so the output is a full Presenton-styled deck.
-    This returns the same PresentationPathAndEditPath as the main handler.
     """
     # Normalize enum fields robustly
     tone_enum = coerce_enum(Tone, tone, Tone.DEFAULT)
@@ -402,9 +508,6 @@ async def generate_presentation_from_gemini(
 # -------------------------
 # Backwards-compatible async entrypoint
 # -------------------------
-# Some parts of your codebase (or external callers) import generate_presentation and call:
-#   await generate_presentation(content=..., n_slides=..., template=..., export_as=..., ...)
-# To maintain compatibility, expose an async function that accepts keyword args.
 async def generate_presentation(**kwargs):
     """
     Backwards-compatible wrapper so other modules that import `generate_presentation`
@@ -426,7 +529,8 @@ async def generate_presentation(**kwargs):
         web_search=kwargs.get("web_search", False),
     )
 
-# Keep explicit name for clarity
+# Keep explicit names
 generate_presentation = generate_presentation
 generate_presentation_from_gemini = generate_presentation_from_gemini
+
 
