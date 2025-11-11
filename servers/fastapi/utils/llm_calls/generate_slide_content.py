@@ -1,144 +1,58 @@
-from datetime import datetime
+# servers/fastapi/utils/llm_calls/generate_slide_content.py
+
 from typing import Optional
-from models.llm_message import LLMSystemMessage, LLMUserMessage
-from models.presentation_layout import SlideLayoutModel
-from models.presentation_outline_model import SlideOutlineModel
-from services.llm_client import LLMClient
-from utils.llm_client_error_handler import handle_llm_client_exceptions
-from utils.llm_provider import get_model
-from utils.schema_utils import add_field_in_schema, remove_fields_from_schema
+
+from servers.fastapi.models.llm_message import LLMSystemMessage, LLMUserMessage
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from servers.fastapi.models.presentation_structure_model import SlideLayout
+from servers.fastapi.services.llm_client import LLMClient
+from servers.fastapi.utils.llm_provider import get_model
+from servers.fastapi.utils.llm_client_error_handler import handle_llm_client_exceptions
 
 
-def get_system_prompt(
-    tone: Optional[str] = None,
-    verbosity: Optional[str] = None,
-    instructions: Optional[str] = None,
-):
-    return f"""
-        Generate structured slide based on provided outline, follow mentioned steps and notes and provide structured output.
-
-        {"# User Instructions:" if instructions else ""}
-        {instructions or ""}
-
-        {"# Tone:" if tone else ""}
-        {tone or ""}
-
-        {"# Verbosity:" if verbosity else ""}
-        {verbosity or ""}
-
-        # Steps
-        1. Analyze the outline.
-        2. Generate structured slide based on the outline.
-        3. Generate speaker note that is simple, clear, concise and to the point.
-
-        # Notes
-        - Slide body should not use words like "This slide", "This presentation".
-        - Rephrase the slide body to make it flow naturally.
-        - Only use markdown to highlight important points.
-        - Make sure to follow language guidelines.
-        - Speaker note should be normal text, not markdown.
-        - Strictly follow the max and min character limit for every property in the slide.
-        - Never ever go over the max character limit. Limit your narration to make sure you never go over the max character limit.
-        - Number of items should not be more than max number of items specified in slide schema. If you have to put multiple points then merge them to obey max numebr of items.
-        - Generate content as per the given tone.
-        - Be very careful with number of words to generate for given field. As generating more than max characters will overflow in the design. So, analyze early and never generate more characters than allowed.
-        - Do not add emoji in the content.
-        - Metrics should be in abbreviated form with least possible characters. Do not add long sequence of words for metrics.
-        - For verbosity:
-            - If verbosity is 'concise', then generate description as 1/3 or lower of the max character limit. Don't worry if you miss content or context.
-            - If verbosity is 'standard', then generate description as 2/3 of the max character limit.
-            - If verbosity is 'text-heavy', then generate description as 3/4 or higher of the max character limit. Make sure it does not exceed the max character limit.
-
-        User instructions, tone and verbosity should always be followed and should supercede any other instruction, except for max and min character limit, slide schema and number of items.
-
-        - Provide output in json format and **don't include <parameters> tags**.
-
-        # Image and Icon Output Format
-        image: {{
-            __image_prompt__: string,
-        }}
-        icon: {{
-            __icon_query__: string,
-        }}
-
-    """
-
-
-def get_user_prompt(outline: str, language: str):
-    return f"""
-        ## Current Date and Time
-        {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
-        ## Icon Query And Image Prompt Language
-        English
-
-        ## Slide Content Language
-        {language}
-
-        ## Slide Outline
-        {outline}
-    """
-
-
-def get_messages(
-    outline: str,
-    language: str,
-    tone: Optional[str] = None,
-    verbosity: Optional[str] = None,
-    instructions: Optional[str] = None,
-):
-
+def get_messages(slide_outline: str, slide_type: str, layout: SlideLayout, style: str):
+    """Create the LLM message for generating a single slide’s detailed content."""
     return [
         LLMSystemMessage(
-            content=get_system_prompt(tone, verbosity, instructions),
+            content=(
+                f"You are an expert presentation slide generator.\n\n"
+                f"Slide Type: {slide_type}\n"
+                f"Layout: {layout.type} ({layout.style})\n"
+                f"Color Scheme: {layout.color_scheme or 'Default'}\n"
+                f"Visual Focus: {layout.visual or 'Mixed'}\n\n"
+                "# OBJECTIVE\n"
+                "Generate concise, high-impact bullet points for this slide, "
+                "keeping tone aligned with professional presentation design.\n\n"
+                f"Follow hybrid aesthetics — mix gradient hero styles, clean text visuals, "
+                f"and modern contrast."
+            ),
         ),
-        LLMUserMessage(
-            content=get_user_prompt(outline, language),
-        ),
+        LLMUserMessage(content=f"Outline: {slide_outline}"),
     ]
 
 
 async def get_slide_content_from_type_and_outline(
-    slide_layout: SlideLayoutModel,
-    outline: SlideOutlineModel,
-    language: str,
-    tone: Optional[str] = None,
-    verbosity: Optional[str] = None,
-    instructions: Optional[str] = None,
+    slide_outline: str,
+    slide_type: str,
+    layout: Optional[SlideLayout] = None,
+    style: Optional[str] = "hybrid-modern",
 ):
+    """Generate full slide content based on layout, type, and outline."""
     client = LLMClient()
     model = get_model()
 
-    response_schema = remove_fields_from_schema(
-        slide_layout.json_schema, ["__image_url__", "__icon_url__"]
-    )
-    response_schema = add_field_in_schema(
-        response_schema,
-        {
-            "__speaker_note__": {
-                "type": "string",
-                "minLength": 100,
-                "maxLength": 250,
-                "description": "Speaker note for the slide",
-            }
-        },
-        True,
-    )
+    if layout is None:
+        layout = SlideLayout(
+            id=1, type="default", style="modern", color_scheme="blue-gradient"
+        )
 
     try:
-        response = await client.generate_structured(
-            model=model,
-            messages=get_messages(
-                outline.content,
-                language,
-                tone,
-                verbosity,
-                instructions,
-            ),
-            response_format=response_schema,
-            strict=False,
-        )
-        return response
+        messages = get_messages(slide_outline, slide_type, layout, style)
+        response = await client.generate_text(model=model, messages=messages)
+        return response.strip()
 
     except Exception as e:
         raise handle_llm_client_exceptions(e)
+
