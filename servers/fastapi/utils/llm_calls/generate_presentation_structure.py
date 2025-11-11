@@ -19,45 +19,37 @@ def get_messages(
     data: str,
     instructions: Optional[str] = None,
 ):
-    """
-    Build prompt messages for the LLM to determine layout index per slide.
-    """
+    """Build LLM messages for structure generation."""
+    user_instructions = ""
+    if instructions:
+        user_instructions = "# User Instruction:\n" + instructions
+
+    system_prompt = (
+        "You're a professional presentation designer creating hybrid-style decks "
+        "that blend modern visuals and clean general layouts.\n\n"
+        f"{presentation_layout.to_string()}\n\n"
+        "# DESIGN PRINCIPLES\n"
+        "- Combine **visual storytelling** and **data clarity**\n"
+        "- Use hybrid styles: gradient hero slides, charts, clean text visuals\n"
+        "- Alternate between text, image, and chart slides for rhythm\n"
+        "- Never make all slides identical in layout\n\n"
+        "# LAYOUT SELECTION RULES\n"
+        "1. Match layout to content purpose:\n"
+        "   - Title → hero layout\n"
+        "   - Problem → image-left-text-right\n"
+        "   - Solution → split-modern\n"
+        "   - Market → chart or data-heavy layout\n"
+        "   - Team → photo grid\n"
+        "   - Roadmap → timeline-modern\n"
+        "   - CTA → center-cta-gradient\n\n"
+        "2. Ensure flow and variety across slides.\n"
+        "3. Prioritize clarity, color balance, and audience engagement.\n\n"
+        f"{user_instructions}\n\n"
+        f"Now, assign a layout index for each of the {n_slides} slides based on purpose and tone."
+    )
+
     return [
-        LLMSystemMessage(
-            content=f"""
-You're a professional presentation designer with creative freedom to design visually engaging, high-impact slides.
-
-{presentation_layout.to_string()}
-
-# DESIGN PRINCIPLES
-- Combine **visual storytelling** and **data clarity**
-- Use hybrid styles: gradient hero slides, charts, clean text visuals
-- Alternate between text, image, and chart slides for rhythm
-- Never make all slides identical in layout
-
-# LAYOUT SELECTION RULES
-1. **Match layout to content purpose**:
-   - Title → hero layout
-   - Problem → image-left-text-right
-   - Solution → split-modern
-   - Market → chart or data-heavy layout
-   - Team → photo grid
-   - Roadmap → timeline-modern
-   - CTA → bold center-cta-gradient
-
-2. **Ensure flow and variety**:
-   - Early slides introduce, middle explain, end inspires action
-   - Mix visual density naturally across slides
-
-3. **Audience engagement**:
-   - Prioritize readability, color balance, and energy
-   - Use hybrid visuals (gradient + image + clean data)
-
-{f"# User Instruction:\n{instructions}" if instructions else ""}
-                
-Now, assign a layout index for each of the {n_slides} slides based on purpose and tone.
-"""
-        ),
+        LLMSystemMessage(content=system_prompt),
         LLMUserMessage(content=data),
     ]
 
@@ -68,21 +60,21 @@ def get_messages_for_slides_markdown(
     data: str,
     instructions: Optional[str] = None,
 ):
-    """
-    Same as get_messages() but optimized for user-provided markdown slides.
-    """
+    """Same as get_messages() but for prewritten markdown slides."""
+    user_instructions = ""
+    if instructions:
+        user_instructions = "# User Instruction:\n" + instructions
+
+    system_prompt = (
+        "You're a presentation design expert creating a structure for pre-written slides.\n\n"
+        f"{presentation_layout.to_string()}\n\n"
+        f"{user_instructions}\n\n"
+        f"Select the most appropriate layout for each of the {n_slides} slides "
+        "from the hybrid presentation layout list."
+    )
+
     return [
-        LLMSystemMessage(
-            content=f"""
-You're a presentation design expert creating a structure for pre-written slides.
-
-{presentation_layout.to_string()}
-
-{f"# User Instruction:\n{instructions}" if instructions else ""}
-
-Select the most appropriate layout for each of the {n_slides} slides from the hybrid presentation layout list.
-"""
-        ),
+        LLMSystemMessage(content=system_prompt),
         LLMUserMessage(content=data),
     ]
 
@@ -93,9 +85,7 @@ async def generate_presentation_structure(
     instructions: Optional[str] = None,
     using_slides_markdown: bool = False,
 ) -> PresentationStructureModel:
-    """
-    Generate a structured mapping of slides → layout indexes using the Hybrid Layout.
-    """
+    """Generate the slide → layout mapping using the hybrid layout."""
     client = LLMClient()
     model = get_model()
     response_model = get_presentation_structure_model_with_n_slides(
@@ -103,27 +93,29 @@ async def generate_presentation_structure(
     )
 
     try:
+        if using_slides_markdown:
+            messages = get_messages_for_slides_markdown(
+                presentation_layout,
+                len(presentation_outline.slides),
+                presentation_outline.to_string(),
+                instructions,
+            )
+        else:
+            messages = get_messages(
+                presentation_layout,
+                len(presentation_outline.slides),
+                presentation_outline.to_string(),
+                instructions,
+            )
+
         response = await client.generate_structured(
             model=model,
-            messages=(
-                get_messages_for_slides_markdown(
-                    presentation_layout,
-                    len(presentation_outline.slides),
-                    presentation_outline.to_string(),
-                    instructions,
-                )
-                if using_slides_markdown
-                else get_messages(
-                    presentation_layout,
-                    len(presentation_outline.slides),
-                    presentation_outline.to_string(),
-                    instructions,
-                )
-            ),
+            messages=messages,
             response_format=response_model.model_json_schema(),
             strict=True,
         )
+
         return PresentationStructureModel(**response)
+
     except Exception as e:
         raise handle_llm_client_exceptions(e)
-
