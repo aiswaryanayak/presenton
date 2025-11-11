@@ -28,7 +28,7 @@ class LLMClient:
     """
     Unified LLM client compatible with Presenton’s backend.
     Supports Gemini 2.0 Experimental, OpenAI, and Anthropic.
-    Includes `stream_structured` + `enable_web_grounding` fallback.
+    Includes `stream_structured` + `enable_web_grounding` compatibility.
     """
 
     def __init__(self):
@@ -44,8 +44,12 @@ class LLMClient:
         # ✅ Your correct Gemini model
         self.gemini_model_name = "gemini-2.0-exp"
 
-        # ✅ Fix: Prevent Presenton crash — attribute is required
-        self.enable_web_grounding = False
+    # ✅ Fix: Presenton expects this method, not a bool
+    def enable_web_grounding(self) -> bool:
+        """
+        Compatibility placeholder — Presenton checks this before grounding web data.
+        """
+        return False
 
     # ----------------------------------------------------------
     # 🧠 Universal generation method
