@@ -252,7 +252,36 @@ async def generate_presentation_handler(
                 slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
                 presentation_outlines_json = {"slides": slides_built}
 
-            presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
+            # Normalize before model validation
+if isinstance(presentation_outlines_json, dict) and "slides" in presentation_outlines_json:
+    for slide in presentation_outlines_json["slides"]:
+        # Ensure title and content are plain strings
+        if not isinstance(slide.get("title"), str):
+            slide["title"] = str(slide.get("title", ""))
+        if isinstance(slide.get("content"), list):
+            cleaned = []
+            for c in slide["content"]:
+                if isinstance(c, dict):
+                    if "text" in c:
+                        cleaned.append(c["text"])
+                    else:
+                        cleaned.append(str(c))
+                elif isinstance(c, str):
+                    cleaned.append(c)
+                else:
+                    cleaned.append(str(c))
+            slide["content"] = cleaned
+        elif isinstance(slide.get("content"), dict):
+            slide["content"] = [str(slide["content"].get("text", ""))]
+        elif slide.get("content") is None:
+            slide["content"] = ["(empty)"]
+else:
+    # fallback heuristic if slides missing
+    slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
+    presentation_outlines_json = {"slides": slides_built}
+
+presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
+
             total_outlines = len(presentation_outlines.slides)
 
         else:
