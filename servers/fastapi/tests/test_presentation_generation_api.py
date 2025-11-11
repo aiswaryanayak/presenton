@@ -1,10 +1,11 @@
-from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
-from models.presentation_layout import PresentationLayoutModel
-from models.presentation_structure_model import PresentationStructureModel
-from api.v1.ppt.endpoints.presentation import PRESENTATION_ROUTER
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
+from servers.fastapi.api.v1.ppt.endpoints.presentation import PRESENTATION_ROUTER
 
 class MockAiohttpResponse:
     def __init__(self, status=200, json_data=None):
