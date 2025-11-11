@@ -4,11 +4,11 @@ import uuid
 from sqlalchemy import JSON, Column, DateTime, String
 from sqlmodel import Boolean, Field, SQLModel
 
-from models.presentation_layout import PresentationLayoutModel
-from models.presentation_outline_model import PresentationOutlineModel
-from models.presentation_structure_model import PresentationStructureModel
-from utils.datetime_utils import get_current_utc_datetime
-
+# ✅ Fix: import the HybridLayout and alias it to PresentationLayoutModel
+from servers.fastapi.models.presentation_layout.hybrid import HybridLayout as PresentationLayoutModel
+from servers.fastapi.models.presentation_outline_model import PresentationOutlineModel
+from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
+from servers.fastapi.utils.datetime_utils import get_current_utc_datetime
 
 class PresentationModel(SQLModel, table=True):
     __tablename__ = "presentations"
