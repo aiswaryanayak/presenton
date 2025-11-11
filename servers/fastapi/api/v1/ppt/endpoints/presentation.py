@@ -1,3 +1,4 @@
+# servers/fastapi/api/v1/ppt/endpoints/presentation.py
 import asyncio
 from datetime import datetime
 import json
@@ -5,7 +6,7 @@ import math
 import os
 import random
 import traceback
-from typing import Annotated, List, Literal, Optional, Tuple
+from typing import Annotated, List, Literal, Optional, Tuple, Type, Any
 import dirtyjson
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
 from fastapi.responses import StreamingResponse
@@ -68,6 +69,33 @@ from servers.fastapi.utils.process_slides import (
 )
 
 PRESENTATION_ROUTER = APIRouter(prefix="/presentation", tags=["Presentation"])
+
+
+# -------------------------
+# Helpers
+# -------------------------
+def coerce_enum(enum_cls: Type[Any], value: Any, default: Any):
+    """
+    Try to coerce value to an enum member of enum_cls.
+    Accepts either an enum member, the enum value, or the enum name (case-insensitive).
+    Falls back to default on failure.
+    """
+    if value is None:
+        return default
+    if isinstance(value, enum_cls):
+        return value
+    try:
+        # Try if value is the raw enum value
+        return enum_cls(value)
+    except Exception:
+        pass
+    try:
+        # Try by name (case-insensitive)
+        if isinstance(value, str):
+            return enum_cls[value.upper()]
+    except Exception:
+        pass
+    return default
 
 
 # -------------------------
@@ -209,6 +237,7 @@ async def generate_presentation_handler(
             )
             total_outlines = len(request.slides_markdown)
 
+        # Select layout and structure
         layout_model = await get_layout_by_name(request.template)
         total_slide_layouts = len(layout_model.slides)
 
@@ -301,9 +330,14 @@ async def generate_presentation_handler(
             edit_path=f"/presentation?id={presentation_id}",
         )
 
-    except Exception:
+    except HTTPException:
+        # Re-raise HTTP exceptions unchanged
+        raise
+    except Exception as e:
+        # Improved debug output so you can check Render logs and see the real issue
+        print("🔥 DEBUG: Presentation generation crashed:", repr(e))
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Presentation generation failed")
+        raise HTTPException(status_code=500, detail=f"Presentation generation failed: {str(e)}")
 
 
 # -------------------------
@@ -337,18 +371,13 @@ async def generate_presentation_from_gemini(
     """
     Wrapper that accepts simple kwargs (as your /api/v1/ppt/from_gemini endpoint passes)
     and calls the primary internal pipeline so the output is a full Presenton-styled deck.
+    This returns the same PresentationPathAndEditPath as the main handler.
     """
-    # Normalize enum fields
-    try:
-        tone_enum = Tone(tone) if not isinstance(tone, Tone) else tone
-    except Exception:
-        tone_enum = Tone.DEFAULT
+    # Normalize enum fields robustly
+    tone_enum = coerce_enum(Tone, tone, Tone.DEFAULT)
+    verbosity_enum = coerce_enum(Verbosity, verbosity, Verbosity.STANDARD)
 
-    try:
-        verbosity_enum = Verbosity(verbosity) if not isinstance(verbosity, Verbosity) else verbosity
-    except Exception:
-        verbosity_enum = Verbosity.STANDARD
-
+    # Build typed request
     request = GeneratePresentationRequest(
         content=content,
         n_slides=n_slides,
@@ -370,6 +399,34 @@ async def generate_presentation_from_gemini(
         return response
 
 
-# ✅ Compatibility alias (so `from ... import generate_presentation` works)
-generate_presentation = generate_presentation_from_gemini
+# -------------------------
+# Backwards-compatible async entrypoint
+# -------------------------
+# Some parts of your codebase (or external callers) import generate_presentation and call:
+#   await generate_presentation(content=..., n_slides=..., template=..., export_as=..., ...)
+# To maintain compatibility, expose an async function that accepts keyword args.
+async def generate_presentation(**kwargs):
+    """
+    Backwards-compatible wrapper so other modules that import `generate_presentation`
+    can call it using keyword args (like content=..., n_slides=..., template=..., export_as=...).
+    This simply delegates to generate_presentation_from_gemini.
+    """
+    # Only accept expected keys; provide defaults where missing
+    return await generate_presentation_from_gemini(
+        content=kwargs.get("content", ""),
+        n_slides=kwargs.get("n_slides", 10),
+        export_as=kwargs.get("export_as", "pptx"),
+        language=kwargs.get("language", "English"),
+        template=kwargs.get("template", "modern"),
+        tone=kwargs.get("tone", "default"),
+        verbosity=kwargs.get("verbosity", "standard"),
+        instructions=kwargs.get("instructions", ""),
+        include_title_slide=kwargs.get("include_title_slide", True),
+        include_table_of_contents=kwargs.get("include_table_of_contents", False),
+        web_search=kwargs.get("web_search", False),
+    )
+
+# Keep explicit name for clarity
+generate_presentation = generate_presentation
+generate_presentation_from_gemini = generate_presentation_from_gemini
 
