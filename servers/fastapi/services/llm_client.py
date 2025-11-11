@@ -1,10 +1,9 @@
 import os
 import asyncio
-import json
 from typing import Any, Optional
 from fastapi import HTTPException
 
-# === Optional vendor clients ===
+# === Optional vendor imports ===
 try:
     import google.generativeai as genai
 except Exception:
@@ -28,16 +27,14 @@ from utils.get_env import (
     get_openai_api_key_env,
 )
 
-
 # ===============================================================
-# ✅ UNIVERSAL LLM CLIENT (Gemini 2.0-exp + OpenAI + Anthropic)
+# ✅ UNIVERSAL LLM CLIENT — Gemini 2.0-exp + OpenAI + Anthropic
 # ===============================================================
 class LLMClient:
     """
-    Unified LLM client for Presenton’s backend.
-    Handles Gemini 2.0-exp by default, plus OpenAI and Anthropic.
-    Provides a fully compatible `stream_structured()` that accepts
-    every calling style used across Presenton.
+    Unified LLM client for Presenton.
+    Handles Gemini 2.0-exp by default, plus OpenAI & Anthropic.
+    Provides a fully-compatible stream_structured() handler.
     """
 
     def __init__(self):
@@ -125,27 +122,24 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"LLM API error: {e}")
 
     # ===========================================================
-    # ⚡ STREAM_STRUCTURED — Presenton compatibility
+    # ⚡ STREAM_STRUCTURED — final universal compatibility
     # ===========================================================
     async def stream_structured(self, *args, **kwargs):
         """
-        Backwards-compatible structured streaming wrapper.
-
-        Supports all forms:
+        Handles all input styles:
           - stream_structured(prompt="...")
           - stream_structured("prompt text")
           - stream_structured(messages=[{"role": "user", "content": "..."}])
+          - stream_structured(messages=[{"content": [{"text": "..."}]}])
           - stream_structured(inputs="...") or data="..."
         """
-
-        # --- Extract prompt from every possible style ---
         prompt = None
 
-        # 1️⃣ Positional arg
+        # 1️⃣ Direct positional argument
         if len(args) > 0 and isinstance(args[0], str):
             prompt = args[0]
 
-        # 2️⃣ Named keywords
+        # 2️⃣ Named keys
         if not prompt:
             prompt = (
                 kwargs.get("prompt")
@@ -155,30 +149,53 @@ class LLMClient:
                 or kwargs.get("inputs")
             )
 
-        # 3️⃣ OpenAI/Anthropic-style messages
+        # 3️⃣ Handle OpenAI/Anthropic-like message formats
         if not prompt and "messages" in kwargs:
             try:
                 messages = kwargs["messages"]
-                if isinstance(messages, list):
+                if isinstance(messages, list) and len(messages) > 0:
                     for m in reversed(messages):
+                        # Case A: OpenAI style
                         if isinstance(m, dict) and m.get("role") == "user":
-                            prompt = m.get("content")
-                            break
+                            c = m.get("content")
+                            if isinstance(c, list):
+                                # [{"text": "..."}]
+                                text_parts = [
+                                    p.get("text") for p in c if isinstance(p, dict) and p.get("text")
+                                ]
+                                if text_parts:
+                                    prompt = " ".join(text_parts)
+                                    break
+                            elif isinstance(c, str):
+                                prompt = c
+                                break
+                        # Case B: Anthropic style (no role)
+                        if not prompt and isinstance(m, dict) and "content" in m:
+                            c = m["content"]
+                            if isinstance(c, list):
+                                for part in c:
+                                    if isinstance(part, dict) and "text" in part:
+                                        prompt = part["text"]
+                                        break
+                            elif isinstance(c, str):
+                                prompt = c
+                            if prompt:
+                                break
             except Exception:
                 pass
 
-        # --- Error if still missing ---
+        # 4️⃣ Still missing? fail cleanly
         if not prompt:
             raise HTTPException(
                 status_code=400,
-                detail="LLMClient.stream_structured() missing 'prompt' or messages[].",
+                detail="LLMClient.stream_structured() missing 'prompt' or valid messages[].content[].text",
             )
 
-        # --- Extract model/provider ---
+        # 5️⃣ Extract model/provider
         model = kwargs.get("model") or kwargs.get("model_name")
         provider = kwargs.get("provider") or kwargs.get("llm_provider") or "google"
 
-        # --- Run generation ---
+        # 6️⃣ Run generation
         try:
             result = await self.generate(prompt, provider=provider, model=model)
             if isinstance(result, dict):
@@ -186,6 +203,7 @@ class LLMClient:
             else:
                 yield {"text": result}
         except Exception as e:
-            print("⚠️ stream_structured error:", e)
-            raise HTTPException(status_code=500, detail=f"stream_structured failed: {e}")
+            print("⚠️ stream_structured failed:", e)
+            raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
+
 
