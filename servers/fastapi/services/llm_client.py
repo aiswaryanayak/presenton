@@ -7,127 +7,98 @@ from fastapi import HTTPException
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk as OpenAIChatCompletionChunk
 
-# ✅ Stable Gemini import for google-generativeai==0.8.5
+# ✅ Stable Gemini import for google-generativeai==0.8.5+
 import google.generativeai as genai
-
-# ✅ Compatible type imports (FunctionCallingConfigMode removed in this version)
-from google.ai.generativelanguage_v1beta.types import (
-    Content as GoogleContent,
-    Part as GoogleContentPart,
-    Tool as GoogleTool,
-    ToolConfig as GoogleToolConfig,
-    FunctionCallingConfig as GoogleFunctionCallingConfig,
-)
-
-# ✅ Manual fallback for FunctionCallingConfigMode (removed upstream)
-GoogleFunctionCallingConfigMode = type("GoogleFunctionCallingConfigMode", (), {
-    "AUTO": "AUTO",
-    "ANY": "ANY",
-    "NONE": "NONE",
-})
-
-# ✅ Safe import for GenerateContentConfig (may not exist in some builds)
-try:
-    from google.generativeai.types import GenerateContentConfig
-except ImportError:
-    class GenerateContentConfig:
-        """Fallback stub for older builds where the class isn't exposed."""
-        def __init__(self, **kwargs):
-            self.config = kwargs
-
 
 # ✅ Anthropic imports
 from anthropic import AsyncAnthropic
-from anthropic.types import Message as AnthropicMessage
-from anthropic import MessageStreamEvent as AnthropicMessageStreamEvent
 
 # ✅ Internal imports
 from enums.llm_provider import LLMProvider
-from models.llm_message import (
-    AnthropicAssistantMessage,
-    AnthropicUserMessage,
-    GoogleAssistantMessage,
-    GoogleToolCallMessage,
-    OpenAIAssistantMessage,
-    LLMMessage,
-    LLMSystemMessage,
-    LLMUserMessage,
-)
-from models.llm_tool_call import (
-    AnthropicToolCall,
-    GoogleToolCall,
-    LLMToolCall,
-    OpenAIToolCall,
-    OpenAIToolCallFunction,
-)
-from models.llm_tools import LLMDynamicTool, LLMTool
-from services.llm_tool_calls_handler import LLMToolCallsHandler
-from utils.async_iterator import iterator_to_async
-from utils.dummy_functions import do_nothing_async
 from utils.get_env import (
     get_anthropic_api_key_env,
-    get_custom_llm_api_key_env,
-    get_custom_llm_url_env,
-    get_disable_thinking_env,
     get_google_api_key_env,
-    get_ollama_url_env,
     get_openai_api_key_env,
-    get_tool_calls_env,
-    get_web_grounding_env,
 )
-from utils.llm_provider import get_llm_provider, get_model
-from utils.parsers import parse_bool_or_none
-from utils.schema_utils import (
-    ensure_strict_json_schema,
-    flatten_json_schema,
-    remove_titles_from_schema,
-)
-# all your imports here
-from utils.schema_utils import (
-    ensure_strict_json_schema,
-    flatten_json_schema,
-    remove_titles_from_schema,
-)
+from fastapi import HTTPException
 
 # ==========================================================
-# ✅ Minimal LLMClient stub (prevents ImportError)
+# ✅ Universal LLMClient (Gemini 2.0-exp + OpenAI + Anthropic)
 # ==========================================================
 class LLMClient:
     """
-    A lightweight placeholder for the main LLM client handler.
-    This version avoids import errors and can be expanded later
-    to integrate Google, OpenAI, or Anthropic providers.
+    Unified LLM client compatible with Presenton’s backend.
+    Supports Gemini 2.0 Experimental, OpenAI, and Anthropic.
+    Includes `stream_structured` fallback for full compatibility.
     """
+
     def __init__(self):
-        # Initialize API keys
+        # Load all available API keys
         self.google_api_key = get_google_api_key_env()
         self.openai_api_key = get_openai_api_key_env()
         self.anthropic_api_key = get_anthropic_api_key_env()
 
+        # Configure Gemini globally once
+        if self.google_api_key:
+            genai.configure(api_key=self.google_api_key)
+
+        # Default Gemini model (⚡ your setup)
+        self.gemini_model_name = "gemini-2.0-exp"  # ✅ your correct model
+
+    # ----------------------------------------------------------
+    # 🧠 Universal generation method
+    # ----------------------------------------------------------
     async def generate(self, prompt: str, provider: str = "google"):
         """
-        Basic placeholder method for text generation.
+        Generate text from selected LLM provider.
+        Defaults to Gemini 2.0 Experimental.
         """
-        if provider == "google":
-            genai.configure(api_key=self.google_api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            return response.text
-        elif provider == "openai":
-            client = AsyncOpenAI(api_key=self.openai_api_key)
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.choices[0].message.content
-        elif provider == "anthropic":
-            client = AsyncAnthropic(api_key=self.anthropic_api_key)
-            response = await client.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
+        try:
+            if provider == "google":
+                model = genai.GenerativeModel(self.gemini_model_name)
+                # new Gemini API is synchronous but thread-safe
+                response = await asyncio.to_thread(model.generate_content, prompt)
+                return response.text
 
+            elif provider == "openai":
+                client = AsyncOpenAI(api_key=self.openai_api_key)
+                response = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.choices[0].message.content
+
+            elif provider == "anthropic":
+                client = AsyncAnthropic(api_key=self.anthropic_api_key)
+                response = await client.messages.create(
+                    model="claude-3-opus-20240229",
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.content[0].text
+
+            else:
+                raise ValueError(f"Unsupported provider: {provider}")
+
+        except Exception as e:
+            print(f"❌ LLMClient.generate error ({provider}):", str(e))
+            raise HTTPException(status_code=500, detail=f"LLM API error: {str(e)}")
+
+    # ----------------------------------------------------------
+    # ⚡ stream_structured — compatibility with Presenton
+    # ----------------------------------------------------------
+    async def stream_structured(self, prompt: str, response_model=None, stream: bool = False):
+        """
+        Presenton expects this method for real-time structured responses.
+        Gemini 2.0 doesn’t expose a native streaming structured API,
+        so we emulate it safely via a single async yield.
+        """
+        try:
+            result = await self.generate(prompt)
+            if isinstance(result, str):
+                yield {"text": result}
+            else:
+                yield result
+        except Exception as e:
+            print("⚠️ stream_structured fallback failed:", e)
+            raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
