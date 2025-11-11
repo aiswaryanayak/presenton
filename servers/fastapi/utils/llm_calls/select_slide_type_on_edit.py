@@ -1,37 +1,43 @@
-from models.llm_message import LLMSystemMessage, LLMUserMessage
-from models.presentation_layout import PresentationLayoutModel, SlideLayoutModel
-from models.slide_layout_index import SlideLayoutIndex
-from models.sql.slide import SlideModel
-from services.llm_client import LLMClient
-from utils.llm_client_error_handler import handle_llm_client_exceptions
-from utils.llm_provider import get_model
+# servers/fastapi/utils/llm_calls/select_slide_type_on_edit.py
+
+from typing import Optional
+from servers.fastapi.models.llm_message import LLMSystemMessage, LLMUserMessage
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from servers.fastapi.models.presentation_structure_model import SlideLayout
+from servers.fastapi.models.sql.slide import SlideModel
+from servers.fastapi.services.llm_client import LLMClient
+from servers.fastapi.utils.llm_provider import get_model
+from servers.fastapi.utils.llm_client_error_handler import handle_llm_client_exceptions
 
 
-def get_messages(
+def get_messages_for_layout_selection(
     prompt: str,
-    slide_data: dict,
+    slide: SlideModel,
     layout: PresentationLayoutModel,
-    current_slide_layout: int,
 ):
+    """Generate messages for selecting the best slide layout after editing."""
     return [
         LLMSystemMessage(
-            content=f"""
-                Select a Slide Layout index based on provided user prompt and current slide data.
-                {layout.to_string()}
-
-                # Notes
-                - Do not select different slide layout than current unless absolutely necessary as per user prompt. 
-                - If user prompt is not clear, select the layout that is most relevant to the slide data.
-                - If user prompt is not clear, select the layout that is most relevant to the slide data.
-                **Go through all notes and steps and make sure they are followed, including mentioned constraints**
-            """,
+            content=(
+                "You are a professional presentation layout designer.\n"
+                "Given the user's edit request and the slide content, "
+                "select the most appropriate layout from the provided options.\n"
+                "Match layout type, visuals, and theme appropriately."
+            )
         ),
         LLMUserMessage(
             content=f"""
-                - User Prompt: {prompt}
-                - Current Slide Data: {slide_data}
-                - Current Slide Layout: {current_slide_layout}
-            """,
+                # User Edit Prompt
+                {prompt}
+
+                # Current Slide Content
+                {slide.content}
+
+                # Available Layouts
+                {[l.name for l in layout.slides]}
+            """
         ),
     ]
 
@@ -40,27 +46,25 @@ async def get_slide_layout_from_prompt(
     prompt: str,
     layout: PresentationLayoutModel,
     slide: SlideModel,
-) -> SlideLayoutModel:
-
+) -> SlideLayout:
+    """Use LLM to decide which layout best fits the edited slide content."""
     client = LLMClient()
     model = get_model()
 
-    slide_layout_index = layout.get_slide_layout_index(slide.layout)
-
     try:
-        response = await client.generate_structured(
-            model=model,
-            messages=get_messages(
-                prompt,
-                slide.content,
-                layout,
-                slide_layout_index,
-            ),
-            response_format=SlideLayoutIndex.model_json_schema(),
-            strict=True,
-        )
-        index = SlideLayoutIndex(**response).index
-        return layout.slides[index]
+        messages = get_messages_for_layout_selection(prompt, slide, layout)
+        response = await client.generate_text(model=model, messages=messages)
+
+        # Match layout name from response
+        matched = None
+        for l in layout.slides:
+            if l.name.lower() in response.lower():
+                matched = l
+                break
+
+        # Default fallback
+        return matched or layout.slides[0]
 
     except Exception as e:
         raise handle_llm_client_exceptions(e)
+
