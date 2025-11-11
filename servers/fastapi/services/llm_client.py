@@ -123,31 +123,28 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"LLM API error: {e}")
 
     # ===========================================================
-    # ⚡ STREAM_STRUCTURED — PERMANENT RECURSIVE FIX
+    # ⚡ STREAM_STRUCTURED — PERMANENT FIX + DEBUG
     # ===========================================================
     async def stream_structured(self, *args, **kwargs):
         """
-        Handles all input styles:
-          - stream_structured(prompt="...")
+        Handles all input styles and never fails:
+          - prompt="..."
           - stream_structured("prompt text")
-          - stream_structured(messages=[{"role": "user", "content": "..."}])
-          - stream_structured(messages=[{"content": [{"text": "..."}]}])
-          - stream_structured(messages=[{"content": [{"parts": [{"text": "..."}]}]}])
-          - stream_structured(messages=[{"content": [{"parts": [{"content": [{"text": "..."}]}]}]}])
-          - stream_structured(inputs="...") or data="..."
+          - nested messages of any depth
         """
+        print("🔍 DEBUG STREAM INPUT:", kwargs)  # 💡 To inspect payload
+
         prompt = None
 
-        # --- Recursive extractor (never fails) ---
+        # --- Recursive extractor ---
         def extract_text(obj):
-            """
-            Recursively search for any 'text' key anywhere in a nested dict/list structure.
-            Works with Gemini 2.0-exp, OpenAI, Anthropic, and any custom wrapper.
-            """
+            """Recursively search for any 'text' key or string."""
             if isinstance(obj, dict):
-                if "text" in obj and isinstance(obj["text"], str):
-                    return obj["text"]
-                for v in obj.values():
+                for k, v in obj.items():
+                    if isinstance(v, str) and v.strip():
+                        return v
+                    if k == "text" and isinstance(v, str):
+                        return v
                     result = extract_text(v)
                     if result:
                         return result
@@ -164,7 +161,7 @@ class LLMClient:
         if len(args) > 0 and isinstance(args[0], str):
             prompt = args[0]
 
-        # 2️⃣ Named keys
+        # 2️⃣ Common named parameters
         if not prompt:
             prompt = (
                 kwargs.get("prompt")
@@ -174,22 +171,26 @@ class LLMClient:
                 or kwargs.get("inputs")
             )
 
-        # 3️⃣ Deep recursive search through messages
+        # 3️⃣ Recursively search all message structures
         if not prompt and "messages" in kwargs:
             prompt = extract_text(kwargs["messages"])
 
-        # 4️⃣ Still missing → fail cleanly
+        # 4️⃣ Final fallback — search entire kwargs recursively
+        if not prompt:
+            prompt = extract_text(kwargs)
+
+        # 5️⃣ Still missing → fail cleanly
         if not prompt or not isinstance(prompt, str) or not prompt.strip():
             raise HTTPException(
                 status_code=400,
-                detail="LLMClient.stream_structured() missing 'prompt' or nested text field (checked recursively)",
+                detail="LLMClient.stream_structured() missing 'prompt' or any string content (checked deeply)",
             )
 
-        # 5️⃣ Extract model/provider
+        # 6️⃣ Extract model/provider
         model = kwargs.get("model") or kwargs.get("model_name")
         provider = kwargs.get("provider") or kwargs.get("llm_provider") or "google"
 
-        # 6️⃣ Run generation
+        # 7️⃣ Run generation
         try:
             result = await self.generate(prompt, provider=provider, model=model)
             if isinstance(result, dict):
