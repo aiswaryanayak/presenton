@@ -24,10 +24,19 @@ from utils.db_utils import get_database_url_and_connect_args
 
 
 # ---------------------------------------------------------------------------
-# ✅ DATABASE ENGINES SETUP
+# ✅ DATABASE PATHS (Render-safe)
 # ---------------------------------------------------------------------------
+os.makedirs("/tmp/app_data", exist_ok=True)
+
+# Main database in /tmp (Render’s writable folder)
+MAIN_DB_PATH = "/tmp/app_data/presenton.db"
+CONTAINER_DB_PATH = "/tmp/app_data/container.db"
 
 database_url, connect_args = get_database_url_and_connect_args()
+
+# If your get_database_url_and_connect_args() uses env vars, override for safety:
+if not database_url.startswith("sqlite"):
+    database_url = f"sqlite+aiosqlite:///{MAIN_DB_PATH}"
 
 sql_engine: AsyncEngine = create_async_engine(database_url, connect_args=connect_args)
 async_session_maker = async_sessionmaker(sql_engine, expire_on_commit=False)
@@ -39,9 +48,9 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 # ---------------------------------------------------------------------------
-# ✅ CONTAINER DB SETUP (used for Ollama model pull statuses, etc.)
+# ✅ CONTAINER DB SETUP (Ollama status, etc.)
 # ---------------------------------------------------------------------------
-container_db_url = "sqlite+aiosqlite:////app/container.db"
+container_db_url = f"sqlite+aiosqlite:///{CONTAINER_DB_PATH}"
 container_db_engine: AsyncEngine = create_async_engine(
     container_db_url, connect_args={"check_same_thread": False}
 )
@@ -56,22 +65,20 @@ async def get_container_db_async_session() -> AsyncGenerator[AsyncSession, None]
 
 
 # ---------------------------------------------------------------------------
-# ✅ CREATE DATABASE & TABLES (with Render-safe auto cleanup)
+# ✅ CREATE DATABASE & TABLES (Safe for Render)
 # ---------------------------------------------------------------------------
 async def create_db_and_tables():
-    db_path = "/opt/render/project/src/app_data/presenton.db"
-
-    # 🧹 Detect and remove corrupted DB file causing "ix_slides_presentation already exists"
-    if os.path.exists(db_path):
+    # 🧹 Auto-clean broken DB if necessary
+    if os.path.exists(MAIN_DB_PATH):
         try:
-            with open(db_path, "rb") as f:
+            with open(MAIN_DB_PATH, "rb") as f:
                 if b"ix_slides_presentation" in f.read():
                     print("⚠️ Removing old database to fix duplicate index error.")
-                    os.remove(db_path)
+                    os.remove(MAIN_DB_PATH)
         except Exception as e:
             print(f"⚠️ Skipping DB cleanup due to: {e}")
 
-    # ✅ MAIN DATABASE INITIALIZATION
+    # ✅ MAIN DATABASE
     async with sql_engine.begin() as conn:
         try:
             await conn.run_sync(
@@ -95,7 +102,7 @@ async def create_db_and_tables():
             else:
                 raise
 
-    # ✅ CONTAINER DATABASE INITIALIZATION
+    # ✅ CONTAINER DATABASE
     async with container_db_engine.begin() as conn:
         try:
             await conn.run_sync(
