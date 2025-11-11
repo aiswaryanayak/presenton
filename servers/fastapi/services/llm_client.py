@@ -20,7 +20,6 @@ from utils.get_env import (
     get_google_api_key_env,
     get_openai_api_key_env,
 )
-from fastapi import HTTPException
 
 # ==========================================================
 # ✅ Universal LLMClient (Gemini 2.0-exp + OpenAI + Anthropic)
@@ -29,7 +28,7 @@ class LLMClient:
     """
     Unified LLM client compatible with Presenton’s backend.
     Supports Gemini 2.0 Experimental, OpenAI, and Anthropic.
-    Includes `stream_structured` fallback for full compatibility.
+    Includes `stream_structured` + `enable_web_grounding` fallback.
     """
 
     def __init__(self):
@@ -42,8 +41,11 @@ class LLMClient:
         if self.google_api_key:
             genai.configure(api_key=self.google_api_key)
 
-        # Default Gemini model (⚡ your setup)
-        self.gemini_model_name = "gemini-2.0-exp"  # ✅ your correct model
+        # ✅ Your correct Gemini model
+        self.gemini_model_name = "gemini-2.0-exp"
+
+        # ✅ Fix: Prevent Presenton crash — attribute is required
+        self.enable_web_grounding = False
 
     # ----------------------------------------------------------
     # 🧠 Universal generation method
