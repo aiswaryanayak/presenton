@@ -1,12 +1,15 @@
 from datetime import datetime
 from typing import Optional
-from models.llm_message import LLMSystemMessage, LLMUserMessage
-from models.presentation_layout import SlideLayoutModel
-from models.sql.slide import SlideModel
-from services.llm_client import LLMClient
-from utils.llm_client_error_handler import handle_llm_client_exceptions
-from utils.llm_provider import get_model
-from utils.schema_utils import add_field_in_schema, remove_fields_from_schema
+from servers.fastapi.models.llm_message import LLMSystemMessage, LLMUserMessage
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from servers.fastapi.models.presentation_structure_model import SlideLayout
+from servers.fastapi.models.sql.slide import SlideModel
+from servers.fastapi.services.llm_client import LLMClient
+from servers.fastapi.utils.llm_client_error_handler import handle_llm_client_exceptions
+from servers.fastapi.utils.llm_provider import get_model
+from servers.fastapi.utils.schema_utils import add_field_in_schema, remove_fields_from_schema
 
 
 def get_system_prompt(
@@ -14,8 +17,10 @@ def get_system_prompt(
     verbosity: Optional[str] = None,
     instructions: Optional[str] = None,
 ):
+    """Generate a system-level instruction prompt for editing a slide."""
     return f"""
-    Edit Slide data and speaker note based on provided prompt, follow mentioned steps and notes and provide structured output.
+    Edit slide data and speaker notes based on the provided prompt. 
+    Follow all mentioned steps and maintain the structure and clarity.
 
     {"# User Instruction:" if instructions else ""}
     {instructions or ""}
@@ -27,19 +32,17 @@ def get_system_prompt(
     {verbosity or ""}
 
     # Notes
-    - Provide output in language mentioned in **Input**.
-    - The goal is to change Slide data based on the provided prompt.
-    - Do not change **Image prompts** and **Icon queries** if not asked for in prompt.
-    - Generate **Image prompts** and **Icon queries** if asked to generate or change in prompt.
-    - Make sure to follow language guidelines.
-    - Speaker note should be normal text, not markdown.
-    - Speaker note should be simple, clear, concise and to the point.
-
-    **Go through all notes and steps and make sure they are followed, including mentioned constraints**
+    - Output must be in the same language as the input slide.
+    - Modify only requested fields.
+    - Keep **Image prompts** and **Icon queries** unchanged unless explicitly asked to modify.
+    - Generate **Image prompts** and **Icon queries** only if prompted.
+    - Speaker notes must be clear, concise, and non-markdown.
+    - Follow all structure and content rules.
     """
 
 
 def get_user_prompt(prompt: str, slide_data: dict, language: str):
+    """Prepare user message with context for the LLM."""
     return f"""
         ## Icon Query And Image Prompt Language
         English
@@ -66,13 +69,10 @@ def get_messages(
     verbosity: Optional[str] = None,
     instructions: Optional[str] = None,
 ):
+    """Generate the list of system and user messages for the LLM call."""
     return [
-        LLMSystemMessage(
-            content=get_system_prompt(tone, verbosity, instructions),
-        ),
-        LLMUserMessage(
-            content=get_user_prompt(prompt, slide_data, language),
-        ),
+        LLMSystemMessage(content=get_system_prompt(tone, verbosity, instructions)),
+        LLMUserMessage(content=get_user_prompt(prompt, slide_data, language)),
     ]
 
 
@@ -80,15 +80,17 @@ async def get_edited_slide_content(
     prompt: str,
     slide: SlideModel,
     language: str,
-    slide_layout: SlideLayoutModel,
+    slide_layout: SlideLayout,
     tone: Optional[str] = None,
     verbosity: Optional[str] = None,
     instructions: Optional[str] = None,
 ):
+    """Generate the edited slide content using the LLM."""
     model = get_model()
 
+    # Prepare schema (remove image/icon URLs, add speaker note)
     response_schema = remove_fields_from_schema(
-        slide_layout.json_schema, ["__image_url__", "__icon_url__"]
+        getattr(slide_layout, "json_schema", {}), ["__image_url__", "__icon_url__"]
     )
     response_schema = add_field_in_schema(
         response_schema,
@@ -104,6 +106,7 @@ async def get_edited_slide_content(
     )
 
     client = LLMClient()
+
     try:
         response = await client.generate_structured(
             model=model,
@@ -117,3 +120,4 @@ async def get_edited_slide_content(
 
     except Exception as e:
         raise handle_llm_client_exceptions(e)
+
