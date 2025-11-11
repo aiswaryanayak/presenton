@@ -95,11 +95,13 @@ def coerce_enum(enum_cls: Type[Any], value: Any, default: Any):
 
 def _heuristic_create_slides_from_text(raw_text: str, n_slides_target: int) -> List[dict]:
     """Fallback heuristic: create slides from text if parsing fails."""
-    t = raw_text.strip()
+    t = (raw_text or "").strip()
     t = re.sub(r"```(?:json)?", "", t)
+    # Break on strong separators first, then on double newlines
     segments = [s.strip() for s in re.split(r"\n-{3,}\n|\n{2,}", t) if s.strip()]
     if not segments:
-        segments = [t]
+        segments = [t] if t else [""]
+
     if len(segments) >= n_slides_target:
         chosen = segments[:n_slides_target]
     else:
@@ -126,7 +128,7 @@ def _heuristic_create_slides_from_text(raw_text: str, n_slides_target: int) -> L
     slides = []
     for seg in chosen:
         lines = [l.strip() for l in seg.splitlines() if l.strip()]
-        title = lines[0] if lines else seg[:40]
+        title = lines[0] if lines else (seg[:40] if seg else "Untitled")
         content_lines = lines[1:] if len(lines) > 1 else []
         if not content_lines:
             bullets = [s.strip() for s in re.split(r'(?<=[.!?])\s+', seg) if s.strip()]
@@ -166,6 +168,32 @@ async def get_all_presentations(sql_session: AsyncSession = Depends(get_async_se
     ]
 
 
+@PRESENTATION_ROUTER.get("/{id}", response_model=PresentationWithSlides)
+async def get_presentation(id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)):
+    presentation = await sql_session.get(PresentationModel, id)
+    if not presentation:
+        raise HTTPException(404, "Presentation not found")
+    slides = await sql_session.scalars(
+        select(SlideModel)
+        .where(SlideModel.presentation == id)
+        .order_by(SlideModel.index)
+    )
+    return PresentationWithSlides(
+        **presentation.model_dump(),
+        slides=slides,
+    )
+
+
+@PRESENTATION_ROUTER.delete("/{id}", status_code=204)
+async def delete_presentation(id: uuid.UUID, sql_session: AsyncSession = Depends(get_async_session)):
+    presentation = await sql_session.get(PresentationModel, id)
+    if not presentation:
+        raise HTTPException(404, "Presentation not found")
+
+    await sql_session.delete(presentation)
+    await sql_session.commit()
+
+
 # -------------------------
 # Core Generation Handler
 # -------------------------
@@ -194,8 +222,10 @@ async def generate_presentation_handler(
                 if loader.documents:
                     additional_context = "\n\n".join(loader.documents)
 
-            n_slides_to_generate = request.n_slides
+            n_slides_to_generate = request.n_slides or 10
             presentation_outlines_text = ""
+
+            # Collect chunks from generator (LLM wrapper may stream strings/dicts)
             async for chunk in generate_ppt_outline(
                 request.content,
                 n_slides_to_generate,
@@ -207,26 +237,55 @@ async def generate_presentation_handler(
                 request.include_title_slide,
                 request.web_search,
             ):
+                if isinstance(chunk, HTTPException):
+                    raise chunk
                 if isinstance(chunk, dict):
-                    presentation_outlines_text += json.dumps(chunk)
+                    try:
+                        presentation_outlines_text += json.dumps(chunk)
+                    except Exception:
+                        presentation_outlines_text += str(chunk)
                 else:
                     presentation_outlines_text += str(chunk)
 
-            # Parse safely
+            # ---------- Parsing & robust fallback ----------
+            presentation_outlines_json = None
+            parse_exception = None
             try:
                 presentation_outlines_json = json.loads(presentation_outlines_text)
-            except Exception:
+            except Exception as e1:
+                parse_exception = e1
                 try:
                     presentation_outlines_json = dict(dirtyjson.loads(presentation_outlines_text))
-                except Exception:
-                    slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
-                    presentation_outlines_json = {"slides": slides_built}
+                except Exception as e2:
+                    parse_exception = e2
+                    presentation_outlines_json = None
 
-            # --- Normalize Gemini content fields before model validation ---
+            # If parsed JSON doesn't contain slides, attempt regex extraction
+            if not isinstance(presentation_outlines_json, dict) or "slides" not in presentation_outlines_json:
+                try:
+                    m = re.search(r'(\{.*"slides"\s*:\s*\[.*\].*?\})', presentation_outlines_text, re.DOTALL)
+                    if m:
+                        candidate = m.group(1)
+                        presentation_outlines_json = json.loads(candidate)
+                except Exception:
+                    # ignore; we'll attempt heuristic below
+                    presentation_outlines_json = None
+
+            # Final fallback: build slides heuristically from raw text
+            if not isinstance(presentation_outlines_json, dict) or "slides" not in presentation_outlines_json:
+                print("⚠️ DEBUG: parsed outlines invalid or missing 'slides'. Falling back to heuristic.")
+                if parse_exception:
+                    print("⚠️ DEBUG parse exception:", repr(parse_exception))
+                slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
+                presentation_outlines_json = {"slides": slides_built}
+
+            # Normalize slide content shapes for PresentationOutlineModel
             if isinstance(presentation_outlines_json, dict) and "slides" in presentation_outlines_json:
                 normalized_slides = []
                 for s in presentation_outlines_json.get("slides", []):
-                    slide = dict(s)
+                    # s may be dict or string; coerce to dict
+                    slide = s if isinstance(s, dict) else {"content": s, "title": None}
+                    slide = dict(slide)  # shallow copy
                     c = slide.get("content")
                     if isinstance(c, list):
                         flattened = []
@@ -239,73 +298,88 @@ async def generate_presentation_handler(
                                 flattened.append(str(item))
                         slide["content"] = flattened
                     elif isinstance(c, dict):
-                        slide["content"] = [c.get("text", str(c))]
+                        # Gemini style content object -> extract text
+                        text_val = c.get("text") or c.get("parts") or c.get("content")
+                        if isinstance(text_val, list):
+                            # flatten parts
+                            flat = []
+                            for p in text_val:
+                                if isinstance(p, dict) and "text" in p:
+                                    flat.append(p["text"])
+                                elif isinstance(p, str):
+                                    flat.append(p)
+                                else:
+                                    flat.append(str(p))
+                            slide["content"] = flat
+                        else:
+                            slide["content"] = [str(text_val)] if text_val is not None else ["(empty)"]
                     elif isinstance(c, (int, float)):
                         slide["content"] = [str(c)]
                     elif isinstance(c, str):
                         slide["content"] = [c]
                     elif c is None:
-                        slide["content"] = ["(empty)"]
+                        # maybe slide has 'text' key instead of content
+                        if "text" in slide and isinstance(slide["text"], str):
+                            slide["content"] = [slide["text"]]
+                        else:
+                            slide["content"] = ["(empty)"]
                     normalized_slides.append(slide)
                 presentation_outlines_json["slides"] = normalized_slides
             else:
-                slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
-                presentation_outlines_json = {"slides": slides_built}
+                # as a last-ditch guarantee (should not be hit)
+                presentation_outlines_json = {"slides": _heuristic_create_slides_from_text("", n_slides_to_generate)}
 
-            # Normalize before model validation
-if isinstance(presentation_outlines_json, dict) and "slides" in presentation_outlines_json:
-    for slide in presentation_outlines_json["slides"]:
-        # Ensure title and content are plain strings
-        if not isinstance(slide.get("title"), str):
-            slide["title"] = str(slide.get("title", ""))
-        if isinstance(slide.get("content"), list):
-            cleaned = []
-            for c in slide["content"]:
-                if isinstance(c, dict):
-                    if "text" in c:
-                        cleaned.append(c["text"])
-                    else:
-                        cleaned.append(str(c))
-                elif isinstance(c, str):
-                    cleaned.append(c)
-                else:
-                    cleaned.append(str(c))
-            slide["content"] = cleaned
-        elif isinstance(slide.get("content"), dict):
-            slide["content"] = [str(slide["content"].get("text", ""))]
-        elif slide.get("content") is None:
-            slide["content"] = ["(empty)"]
-else:
-    # fallback heuristic if slides missing
-    slides_built = _heuristic_create_slides_from_text(presentation_outlines_text, n_slides_to_generate)
-    presentation_outlines_json = {"slides": slides_built}
-
-presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
-
+            # Validate into Pydantic model
+            presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
             total_outlines = len(presentation_outlines.slides)
 
         else:
+            # slides_markdown provided: each markdown block is a slide
             presentation_outlines = PresentationOutlineModel(
                 slides=[SlideOutlineModel(content=slide) for slide in request.slides_markdown]
             )
             total_outlines = len(request.slides_markdown)
 
-        layout_model = await get_layout_by_name(request.template)
-        total_slide_layouts = len(layout_model.slides)
-        if layout_model.ordered:
+        # -------------------------
+        # Choose layout & structure
+        # -------------------------
+        # Default to 'modern' layout when template not set or invalid
+        template_name = (request.template or "modern").lower()
+        try:
+            layout_model = await get_layout_by_name(template_name)
+        except Exception:
+            # If requested template not found, fallback to modern (and log)
+            print(f"⚠️ Layout '{template_name}' not found; falling back to 'modern'.")
+            layout_model = await get_layout_by_name("modern")
+
+        total_slide_layouts = len(layout_model.slides) if getattr(layout_model, "slides", None) else 0
+
+        if getattr(layout_model, "ordered", False):
             presentation_structure = layout_model.to_presentation_structure()
         else:
-            presentation_structure = await generate_presentation_structure(
+            presentation_structure: PresentationStructureModel = await generate_presentation_structure(
                 presentation_outline=presentation_outlines,
                 presentation_layout=layout_model,
                 instructions=request.instructions,
             )
 
-        presentation_structure.slides = presentation_structure.slides[:total_outlines]
-        for i in range(total_outlines):
-            if presentation_structure.slides[i] >= total_slide_layouts:
-                presentation_structure.slides[i] = random.randint(0, total_slide_layouts - 1)
+        # Ensure structure length matches outlines
+        if not isinstance(presentation_structure.slides, list):
+            presentation_structure.slides = [0] * total_outlines
 
+        # Trim or pad presentation_structure.slides to required length
+        presentation_structure.slides = presentation_structure.slides[:total_outlines]
+        while len(presentation_structure.slides) < total_outlines:
+            presentation_structure.slides.append(random.randint(0, max(0, total_slide_layouts - 1)))
+
+        # Sanitize slide indexes
+        for idx in range(len(presentation_structure.slides)):
+            if total_slide_layouts > 0 and presentation_structure.slides[idx] >= total_slide_layouts:
+                presentation_structure.slides[idx] = random.randint(0, total_slide_layouts - 1)
+
+        # -------------------------
+        # Persist Presentation record
+        # -------------------------
         presentation = PresentationModel(
             id=presentation_id,
             content=request.content,
@@ -320,11 +394,17 @@ presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
             instructions=request.instructions,
         )
 
+        # -------------------------
+        # Generate slide contents & assets
+        # -------------------------
         image_service = ImageGenerationService(get_images_directory())
-        async_tasks, slides = [], []
+        async_tasks: List = []
+        slides: List[SlideModel] = []
         layouts = [layout_model.slides[idx] for idx in presentation_structure.slides]
 
+        # process in batches (makes it easier to handle many slides)
         for i, layout in enumerate(layouts):
+            # get slide content (LLM + formatting)
             content = await get_slide_content_from_type_and_outline(
                 layout,
                 presentation_outlines.slides[i],
@@ -333,6 +413,7 @@ presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
                 request.verbosity.value,
                 request.instructions,
             )
+
             slide = SlideModel(
                 presentation=presentation_id,
                 layout_group=layout_model.name,
@@ -344,22 +425,31 @@ presentation_outlines = PresentationOutlineModel(**presentation_outlines_json)
             slides.append(slide)
             async_tasks.append(process_slide_and_fetch_assets(image_service, slide))
 
-        generated_assets = [a for lst in await asyncio.gather(*async_tasks) for a in lst]
+        # gather assets
+        generated_assets_lists = await asyncio.gather(*async_tasks)
+        generated_assets = [asset for assets_list in generated_assets_lists for asset in assets_list]
 
+        # save to DB
         sql_session.add(presentation)
         sql_session.add_all(slides)
         sql_session.add_all(generated_assets)
         await sql_session.commit()
 
+        # export
         presentation_and_path = await export_presentation(
             presentation_id, presentation.title or str(uuid.uuid4()), request.export_as
         )
+
         return PresentationPathAndEditPath(
             **presentation_and_path.model_dump(),
             edit_path=f"/presentation?id={presentation_id}",
         )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions unchanged
+        raise
     except Exception as e:
+        # Improved debug output for logs
         print("🔥 DEBUG: Presentation generation crashed:", repr(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Presentation generation failed: {str(e)}")
@@ -388,7 +478,8 @@ async def generate_presentation_from_gemini(**kwargs):
         n_slides=kwargs.get("n_slides", 10),
         export_as=kwargs.get("export_as", "pptx"),
         language=kwargs.get("language", "English"),
-        template="modern",
+        # Force 'modern' template by default so front-end need not supply one
+        template=kwargs.get("template", "modern"),
 
         tone=tone_enum,
         verbosity=verbosity_enum,
@@ -404,3 +495,4 @@ async def generate_presentation_from_gemini(**kwargs):
 
 
 generate_presentation = generate_presentation_from_gemini
+
