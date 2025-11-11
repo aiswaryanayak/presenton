@@ -1,8 +1,22 @@
 # servers/fastapi/models/presentation_layout/hybrid_presenton_layout.py
+
 from pydantic import BaseModel
-from typing import List
-from servers.fastapi.models.presentation_structure_model import SlideLayout
+from typing import List, Optional
 from servers.fastapi.models.presentation_layout.visual_theme_mapping import get_visual_theme
+
+
+class SlideLayout(BaseModel):
+    """
+    Represents a single slide layout type for the Hybrid Presenton theme.
+    Each layout controls visual, color, and content structure.
+    """
+    id: int
+    type: str
+    style: str
+    color_scheme: str
+    visual: Optional[str] = None
+    notes: Optional[str] = None
+
 
 class HybridPresentonLayout(BaseModel):
     """
@@ -23,90 +37,109 @@ class HybridPresentonLayout(BaseModel):
                 id=1,
                 type="title",
                 style="hero-gradient",
-                color_scheme=themes["hero"]["color"],
-                visual=themes["hero"]["visual"],
-                notes="Bold gradient hero title, startup name, and tagline with clean logo space."
+                color_scheme=themes.get("hero", {}).get("color", "#6C63FF"),
+                visual=themes.get("hero", {}).get("visual", "gradient-bg"),
+                notes="Bold gradient hero title with startup name, tagline, and logo space."
             ),
-            # 2️⃣ Problem Slide (General style)
+            # 2️⃣ Problem Slide
             SlideLayout(
                 id=2,
                 type="problem",
                 style="image-left-text-right",
-                color_scheme=themes["problem"]["color"],
+                color_scheme=themes.get("problem", {}).get("color", "#F5F7FB"),
                 visual="photo-office-team",
-                notes="Left-side image, right-side bullet points of problems. Bold title font."
+                notes="Left-side image, right-side bullet points of problems with bold headings."
             ),
-            # 3️⃣ Solution Slide (Modern)
+            # 3️⃣ Solution Slide
             SlideLayout(
                 id=3,
                 type="solution",
                 style="split-modern",
-                color_scheme=themes["solution"]["color"],
+                color_scheme=themes.get("solution", {}).get("color", "#EEF1FF"),
                 visual="product-ui-screenshot",
-                notes="Clean split layout with image of solution or app UI."
+                notes="Split layout with product visuals or screenshots and clean typography."
             ),
             # 4️⃣ Market / Opportunity Slide
             SlideLayout(
                 id=4,
                 type="market",
                 style="data-chart",
-                color_scheme=themes["market"]["color"],
+                color_scheme=themes.get("market", {}).get("color", "#E9F5FF"),
                 visual="bar-chart-placeholder",
-                notes="Visual chart with market data, opportunity sizing, and stats."
+                notes="Market size chart with opportunity highlights and metrics."
             ),
-            # 5️⃣ Product Features (General visual cards)
+            # 5️⃣ Product Features
             SlideLayout(
                 id=5,
                 type="features",
                 style="image-cards",
-                color_scheme=themes["features"]["color"],
-                visual="product-icons-grid",
-                notes="Three image cards for features or differentiators."
+                color_scheme=themes.get("features", {}).get("color", "#F9F9FF"),
+                visual="icons-grid",
+                notes="Feature cards with icons and small descriptions."
             ),
-            # 6️⃣ Traction Slide (Modern)
+            # 6️⃣ Traction Slide
             SlideLayout(
                 id=6,
                 type="traction",
                 style="chart-focus",
-                color_scheme=themes["traction"]["color"],
+                color_scheme=themes.get("traction", {}).get("color", "#DDF2FF"),
                 visual="growth-line-chart",
-                notes="Chart showing KPIs or revenue growth with clean font and icon header."
+                notes="Clean chart layout for growth metrics and KPIs."
             ),
-            # 7️⃣ Team Slide (General)
+            # 7️⃣ Team Slide
             SlideLayout(
                 id=7,
                 type="team",
                 style="photo-grid",
-                color_scheme=themes["team"]["color"],
+                color_scheme=themes.get("team", {}).get("color", "#FFFFFF"),
                 visual="avatar-cards",
-                notes="Photos of team members with name and designation."
+                notes="Photos of team members with roles and social icons."
             ),
-            # 8️⃣ Roadmap Slide (Modern)
+            # 8️⃣ Roadmap Slide
             SlideLayout(
                 id=8,
                 type="roadmap",
                 style="timeline-modern",
-                color_scheme=themes["roadmap"]["color"],
+                color_scheme=themes.get("roadmap", {}).get("color", "#F2F8FF"),
                 visual="timeline-icons",
-                notes="Milestone-based timeline with gradient connectors."
+                notes="Milestone-based roadmap with gradient timeline."
             ),
-            # 9️⃣ Financials / Graphs Slide
+            # 9️⃣ Financials Slide
             SlideLayout(
                 id=9,
                 type="financials",
                 style="chart-double",
-                color_scheme=themes["financials"]["color"],
+                color_scheme=themes.get("financials", {}).get("color", "#E6F0FF"),
                 visual="dual-chart-placeholder",
-                notes="Two charts: revenue & projections with heading in bold white font."
+                notes="Two charts: revenue & projections with bold white heading."
             ),
-            # 🔟 Final Call to Action
+            # 🔟 Call to Action / Thank You
             SlideLayout(
                 id=10,
                 type="cta",
                 style="center-cta-gradient",
-                color_scheme=themes["cta"]["color"],
+                color_scheme=themes.get("cta", {}).get("color", "#6C63FF"),
                 visual="gradient-wave",
-                notes="Final ask or thank-you slide with bold centered heading and logo."
+                notes="Final call-to-action slide with gradient background and centered text."
+            ),
+            # 💬 Bonus: Quote / Highlight
+            SlideLayout(
+                id=11,
+                type="quote",
+                style="highlight-bold",
+                color_scheme=themes.get("quote", {}).get("color", "#F4F4F6"),
+                visual="minimal-abstract",
+                notes="Single bold quote or tagline centered with visual emphasis."
+            ),
+            # 🔄 Before vs After (Comparison)
+            SlideLayout(
+                id=12,
+                type="comparison",
+                style="two-column",
+                color_scheme=themes.get("comparison", {}).get("color", "#FFFFFF"),
+                visual="before-after-illustration",
+                notes="Side-by-side comparison layout for transformation visuals."
             ),
         ]
+
 
