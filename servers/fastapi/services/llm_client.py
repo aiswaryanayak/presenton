@@ -200,4 +200,94 @@ class LLMClient:
         except Exception as e:
             print("⚠️ stream_structured failed:", e)
             raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
+                # ===========================================================
+    # 🧩 GENERATE_STRUCTURED — used by Presenton everywhere
+    # ===========================================================
+    async def generate_structured(
+        self,
+        model: str,
+        messages: list,
+        response_format: dict,
+        strict: bool = True,
+        provider: Optional[str] = "google",
+    ):
+        """
+        Generates structured (JSON) responses for outlines, slides, layouts, etc.
+        Works seamlessly for Gemini 2.0-exp and OpenAI-compatible models.
+        """
+
+        provider = self._normalize_provider(provider)
+
+        try:
+            # === GEMINI 2.0 / GOOGLE ===
+            if provider.startswith("google"):
+                if not genai:
+                    raise RuntimeError("google-generativeai not installed.")
+
+                model_name = model or self.gemini_model_name
+                gem_model = genai.GenerativeModel(model_name)
+
+                # Combine messages into one text block for Gemini
+                prompt_text = "\n".join(
+                    [m.content if hasattr(m, "content") else str(m) for m in messages]
+                )
+
+                # Generate structured JSON
+                response = await asyncio.to_thread(
+                    gem_model.generate_content,
+                    prompt_text + "\n\nReturn valid JSON strictly matching this schema:\n"
+                    + str(response_format),
+                )
+
+                import json
+                try:
+                    return json.loads(response.text)
+                except Exception:
+                    # Fallback — Gemini sometimes adds commentary before JSON
+                    import re
+                    match = re.search(r"\{.*\}", response.text, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(0))
+                    if strict:
+                        raise ValueError("Gemini did not return valid JSON")
+                    return {"error": "unstructured response", "raw": response.text}
+
+            # === OPENAI ===
+            elif provider.startswith("openai"):
+                if not AsyncOpenAI:
+                    raise RuntimeError("openai not installed.")
+                client = AsyncOpenAI(api_key=self.openai_api_key)
+                resp = await client.chat.completions.create(
+                    model=model or "gpt-4o-mini",
+                    messages=[{"role": "user", "content": str(messages)}],
+                    response_format={"type": "json_schema", "json_schema": response_format},
+                )
+                import json
+                return json.loads(resp.choices[0].message.content)
+
+            # === ANTHROPIC ===
+            elif provider.startswith("anthropic"):
+                if not AsyncAnthropic:
+                    raise RuntimeError("anthropic not installed.")
+                client = AsyncAnthropic(api_key=self.anthropic_api_key)
+                resp = await client.messages.create(
+                    model=model or "claude-3-opus-20240229",
+                    max_tokens=1500,
+                    messages=[{"role": "user", "content": str(messages)}],
+                )
+                import json
+                try:
+                    return json.loads(resp.content[0].text)
+                except Exception:
+                    if strict:
+                        raise
+                    return {"raw": resp.content[0].text}
+
+            else:
+                raise ValueError(f"Unsupported provider: {provider}")
+
+        except Exception as e:
+            print(f"❌ LLMClient.generate_structured() failed: {e}")
+            raise HTTPException(status_code=500, detail=f"LLMClient.generate_structured() failed: {str(e)}")
+
 
