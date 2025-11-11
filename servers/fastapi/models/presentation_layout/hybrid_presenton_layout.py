@@ -142,4 +142,21 @@ class HybridPresentonLayout(BaseModel):
             ),
         ]
 
+    def to_string(self) -> str:
+        """
+        Convert this layout into a readable summary string for LLM context.
+        Helps Gemini understand available slide types and visual patterns.
+        """
+        summary = "# HYBRID PRESENTON LAYOUT OVERVIEW\n"
+        summary += f"Theme: {self.name}\n"
+        summary += "Each layout combines modern gradient visuals and clean data presentation.\n\n"
+
+        for slide in self.slides:
+            summary += (
+                f"- [{slide.id}] {slide.type.upper()} | Style: {slide.style} | "
+                f"Color: {slide.color_scheme} | Visual: {slide.visual or 'N/A'}\n"
+                f"  → {slide.notes}\n\n"
+            )
+
+        return summary.strip()
 
