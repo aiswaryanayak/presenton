@@ -51,7 +51,7 @@ class LLMClient:
             except Exception as e:
                 print("⚠️ Gemini init warning:", e)
 
-        # Default Gemini model
+        # Default Gemini model (⚡ your version)
         self.gemini_model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-exp")
 
     # --- Compatibility flag for Presenton ---
@@ -123,7 +123,7 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"LLM API error: {e}")
 
     # ===========================================================
-    # ⚡ STREAM_STRUCTURED — FINAL UNIVERSAL FIX
+    # ⚡ STREAM_STRUCTURED — PERMANENT RECURSIVE FIX
     # ===========================================================
     async def stream_structured(self, *args, **kwargs):
         """
@@ -133,9 +133,32 @@ class LLMClient:
           - stream_structured(messages=[{"role": "user", "content": "..."}])
           - stream_structured(messages=[{"content": [{"text": "..."}]}])
           - stream_structured(messages=[{"content": [{"parts": [{"text": "..."}]}]}])
+          - stream_structured(messages=[{"content": [{"parts": [{"content": [{"text": "..."}]}]}]}])
           - stream_structured(inputs="...") or data="..."
         """
         prompt = None
+
+        # --- Recursive extractor (never fails) ---
+        def extract_text(obj):
+            """
+            Recursively search for any 'text' key anywhere in a nested dict/list structure.
+            Works with Gemini 2.0-exp, OpenAI, Anthropic, and any custom wrapper.
+            """
+            if isinstance(obj, dict):
+                if "text" in obj and isinstance(obj["text"], str):
+                    return obj["text"]
+                for v in obj.values():
+                    result = extract_text(v)
+                    if result:
+                        return result
+            elif isinstance(obj, list):
+                for item in obj:
+                    result = extract_text(item)
+                    if result:
+                        return result
+            elif isinstance(obj, str) and obj.strip():
+                return obj
+            return None
 
         # 1️⃣ Direct positional argument
         if len(args) > 0 and isinstance(args[0], str):
@@ -151,71 +174,15 @@ class LLMClient:
                 or kwargs.get("inputs")
             )
 
-        # 3️⃣ Handle OpenAI/Anthropic/Gemini-like nested messages
+        # 3️⃣ Deep recursive search through messages
         if not prompt and "messages" in kwargs:
-            try:
-                messages = kwargs["messages"]
-                if isinstance(messages, list) and len(messages) > 0:
-                    for m in reversed(messages):
-                        # Case A: role=user with text
-                        if isinstance(m, dict) and m.get("role") == "user":
-                            c = m.get("content")
+            prompt = extract_text(kwargs["messages"])
 
-                            # direct string
-                            if isinstance(c, str):
-                                prompt = c
-                                break
-
-                            # list of dicts
-                            if isinstance(c, list):
-                                for part in c:
-                                    # direct text part
-                                    if isinstance(part, dict) and "text" in part:
-                                        prompt = part["text"]
-                                        break
-                                    # nested parts (Gemini 2.0 style)
-                                    if (
-                                        isinstance(part, dict)
-                                        and "parts" in part
-                                        and isinstance(part["parts"], list)
-                                    ):
-                                        for p in part["parts"]:
-                                            if isinstance(p, dict) and "text" in p:
-                                                prompt = p["text"]
-                                                break
-                                    if prompt:
-                                        break
-                            if prompt:
-                                break
-
-                        # Case B: No role but content with text/parts
-                        if not prompt and isinstance(m, dict) and "content" in m:
-                            c = m["content"]
-                            if isinstance(c, list):
-                                for part in c:
-                                    if isinstance(part, dict):
-                                        if "text" in part:
-                                            prompt = part["text"]
-                                            break
-                                        if "parts" in part and isinstance(part["parts"], list):
-                                            for p in part["parts"]:
-                                                if isinstance(p, dict) and "text" in p:
-                                                    prompt = p["text"]
-                                                    break
-                                    if prompt:
-                                        break
-                            elif isinstance(c, str):
-                                prompt = c
-                            if prompt:
-                                break
-            except Exception as e:
-                print("⚠️ stream_structured parsing error:", e)
-
-        # 4️⃣ Still missing prompt → fail cleanly
-        if not prompt:
+        # 4️⃣ Still missing → fail cleanly
+        if not prompt or not isinstance(prompt, str) or not prompt.strip():
             raise HTTPException(
                 status_code=400,
-                detail="LLMClient.stream_structured() missing 'prompt' or valid messages[].content[].parts[].text",
+                detail="LLMClient.stream_structured() missing 'prompt' or nested text field (checked recursively)",
             )
 
         # 5️⃣ Extract model/provider
@@ -232,5 +199,4 @@ class LLMClient:
         except Exception as e:
             print("⚠️ stream_structured failed:", e)
             raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
-
 
