@@ -1,12 +1,16 @@
+# servers/fastapi/utils/llm_calls/generate_presentation_structure.py
 from typing import Optional
-from models.llm_message import LLMSystemMessage, LLMUserMessage
-from models.presentation_layout import PresentationLayoutModel
-from models.presentation_outline_model import PresentationOutlineModel
-from services.llm_client import LLMClient
-from utils.llm_client_error_handler import handle_llm_client_exceptions
-from utils.llm_provider import get_model
-from utils.get_dynamic_models import get_presentation_structure_model_with_n_slides
-from models.presentation_structure_model import PresentationStructureModel
+
+from servers.fastapi.models.llm_message import LLMSystemMessage, LLMUserMessage
+from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
+    HybridPresentonLayout as PresentationLayoutModel,
+)
+from servers.fastapi.models.presentation_outline_model import PresentationOutlineModel
+from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
+from servers.fastapi.services.llm_client import LLMClient
+from servers.fastapi.utils.llm_client_error_handler import handle_llm_client_exceptions
+from servers.fastapi.utils.llm_provider import get_model
+from servers.fastapi.utils.get_dynamic_models import get_presentation_structure_model_with_n_slides
 
 
 def get_messages(
@@ -15,52 +19,46 @@ def get_messages(
     data: str,
     instructions: Optional[str] = None,
 ):
+    """
+    Build prompt messages for the LLM to determine layout index per slide.
+    """
     return [
         LLMSystemMessage(
             content=f"""
-                You're a professional presentation designer with creative freedom to design engaging presentations.
+You're a professional presentation designer with creative freedom to design visually engaging, high-impact slides.
 
-                {presentation_layout.to_string()}
+{presentation_layout.to_string()}
 
-                # DESIGN PHILOSOPHY
-                - Create visually compelling and varied presentations
-                - Match layout to content purpose and audience needs
-                - Prioritize engagement over rigid formatting rules
+# DESIGN PRINCIPLES
+- Combine **visual storytelling** and **data clarity**
+- Use hybrid styles: gradient hero slides, charts, clean text visuals
+- Alternate between text, image, and chart slides for rhythm
+- Never make all slides identical in layout
 
-                # Layout Selection Guidelines
-                1. **Content-driven choices**: Let the slide's purpose guide layout selection
-                - Opening/closing → Title layouts
-                - Processes/workflows → Visual process layouts  
-                - Comparisons/contrasts → Side-by-side layouts
-                - Data/metrics → Chart/graph layouts
-                - Concepts/ideas → Image + text layouts
-                - Key insights → Emphasis layouts
+# LAYOUT SELECTION RULES
+1. **Match layout to content purpose**:
+   - Title → hero layout
+   - Problem → image-left-text-right
+   - Solution → split-modern
+   - Market → chart or data-heavy layout
+   - Team → photo grid
+   - Roadmap → timeline-modern
+   - CTA → bold center-cta-gradient
 
-                2. **Visual variety**: Aim for diverse, engaging presentation flow
-                - Mix text-heavy and visual-heavy slides naturally
-                - Use your judgment on when repetition serves the content
-                - Balance information density across slides
+2. **Ensure flow and variety**:
+   - Early slides introduce, middle explain, end inspires action
+   - Mix visual density naturally across slides
 
-                3. **Audience experience**: Consider how slides work together
-                - Create natural transitions between topics
-                - Use layouts that enhance comprehension
-                - Design for maximum impact and retention
+3. **Audience engagement**:
+   - Prioritize readability, color balance, and energy
+   - Use hybrid visuals (gradient + image + clean data)
 
-                **Trust your design instincts. Focus on creating the most effective presentation for the content and audience.**
-
-                {"# User Instruction:" if instructions else ""}
-                {instructions or ""}
-
-                User intruction should be taken into account while creating the presentation structure, except for number of slides.
-
-                Select layout index for each of the {n_slides} slides based on what will best serve the presentation's goals.
-            """,
+{f"# User Instruction:\n{instructions}" if instructions else ""}
+                
+Now, assign a layout index for each of the {n_slides} slides based on purpose and tone.
+"""
         ),
-        LLMUserMessage(
-            content=f"""
-                {data}
-            """,
-        ),
+        LLMUserMessage(content=data),
     ]
 
 
@@ -70,28 +68,22 @@ def get_messages_for_slides_markdown(
     data: str,
     instructions: Optional[str] = None,
 ):
+    """
+    Same as get_messages() but optimized for user-provided markdown slides.
+    """
     return [
         LLMSystemMessage(
             content=f"""
-                You're a professional presentation designer with creative freedom to design engaging presentations.
+You're a presentation design expert creating a structure for pre-written slides.
 
-                {"# User Instruction:" if instructions else ""}
-                {instructions or ""}
+{presentation_layout.to_string()}
 
-                {presentation_layout.to_string()}
+{f"# User Instruction:\n{instructions}" if instructions else ""}
 
-                Select layout that best matches the content of the slides.
-
-                User intruction should be taken into account while creating the presentation structure, except for number of slides.
-
-                Select layout index for each of the {n_slides} slides based on what will best serve the presentation's goals.
-            """,
+Select the most appropriate layout for each of the {n_slides} slides from the hybrid presentation layout list.
+"""
         ),
-        LLMUserMessage(
-            content=f"""
-                {data}
-            """,
-        ),
+        LLMUserMessage(content=data),
     ]
 
 
@@ -101,7 +93,9 @@ async def generate_presentation_structure(
     instructions: Optional[str] = None,
     using_slides_markdown: bool = False,
 ) -> PresentationStructureModel:
-
+    """
+    Generate a structured mapping of slides → layout indexes using the Hybrid Layout.
+    """
     client = LLMClient()
     model = get_model()
     response_model = get_presentation_structure_model_with_n_slides(
@@ -132,3 +126,4 @@ async def generate_presentation_structure(
         return PresentationStructureModel(**response)
     except Exception as e:
         raise handle_llm_client_exceptions(e)
+
