@@ -66,7 +66,7 @@ class LLMClient:
             return provider.lower()
         return str(provider).lower()
 
-      # ===========================================================
+       # ===========================================================
     # 🧠 GENERATE_TEXT — alias for Presenton compatibility
     # ===========================================================
     async def generate_text(
@@ -81,7 +81,7 @@ class LLMClient:
         Joins all message contents into one prompt and calls .generate().
         """
         try:
-            # combine messages (system/user objects or plain strings)
+            # Combine all message contents into one long prompt
             prompt_parts = []
             for m in messages:
                 if hasattr(m, "content"):
