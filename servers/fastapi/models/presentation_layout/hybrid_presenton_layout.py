@@ -1,197 +1,152 @@
-# servers/fastapi/utils/llm_calls/generate_presentation_structure.py
-from typing import Optional
-import json
-import re
-import traceback
+# servers/fastapi/models/presentation_layout/hybrid_presenton_layout.py
 
-from servers.fastapi.models.llm_message import LLMSystemMessage, LLMUserMessage
-from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
-    HybridPresentonLayout as PresentationLayoutModel,
-)
-from servers.fastapi.models.presentation_outline_model import PresentationOutlineModel
-from servers.fastapi.models.presentation_structure_model import PresentationStructureModel
-from servers.fastapi.services.llm_client import LLMClient
-from servers.fastapi.utils.llm_client_error_handler import handle_llm_client_exceptions
-from servers.fastapi.utils.llm_provider import get_model
-from servers.fastapi.utils.get_dynamic_models import get_presentation_structure_model_with_n_slides
+from pydantic import BaseModel
+from typing import List, Optional
+from servers.fastapi.models.presentation_layout.visual_theme_mapping import get_visual_theme
 
 
-def _outline_to_string(presentation_outline: PresentationOutlineModel) -> str:
+class SlideLayout(BaseModel):
     """
-    Convert PresentationOutlineModel into a stable string for LLM input.
-    Uses provided to_string() if available, otherwise builds a safe fallback.
+    Represents a single slide layout type for the Hybrid Presenton theme.
+    Each layout controls visual, color, and content structure.
     """
-    try:
-        if hasattr(presentation_outline, "to_string"):
-            s = presentation_outline.to_string()
-            if isinstance(s, str) and s.strip():
-                return s
-    except Exception:
-        # continue to fallback
-        traceback.print_exc()
-
-    # fallback: try to serialize slides content safely
-    pieces = []
-    for i, slide in enumerate(getattr(presentation_outline, "slides", []) or []):
-        try:
-            # slide may be a pydantic model, dict or string
-            if hasattr(slide, "content"):
-                content = slide.content
-            elif isinstance(slide, dict):
-                content = slide.get("content", "")
-            else:
-                content = str(slide)
-            if isinstance(content, (list, dict)):
-                content = json.dumps(content, ensure_ascii=False)
-        except Exception:
-            content = str(slide)
-        pieces.append(f"## Slide {i+1}:\n{content}")
-    return "\n\n".join(pieces) if pieces else ""
+    id: int
+    type: str
+    style: str
+    color_scheme: str
+    visual: Optional[str] = None
+    notes: Optional[str] = None
 
 
-def get_messages(
-    presentation_layout: PresentationLayoutModel,
-    n_slides: int,
-    data: str,
-    instructions: Optional[str] = None,
-):
-    """Build LLM messages for structure generation."""
-    user_instructions = ""
-    if instructions:
-        user_instructions = "# User Instruction:\n" + instructions
+class HybridPresentonLayout(BaseModel):
+    """
+    Combines Presenton's Modern + General templates for beautiful AI decks.
+    Features: image-rich layouts, data charts, gradients, and bold text.
+    """
+    name: str = "hybrid_presenton"
+    ordered: bool = True
+    slides: List[SlideLayout] = []
 
-    system_prompt = (
-        "You're a professional presentation designer creating hybrid-style decks "
-        "that blend modern visuals and clean general layouts.\n\n"
-        f"{presentation_layout.to_string()}\n\n"
-        "# DESIGN PRINCIPLES\n"
-        "- Combine **visual storytelling** and **data clarity**\n"
-        "- Use hybrid styles: gradient hero slides, charts, clean text visuals\n"
-        "- Alternate between text, image, and chart slides for rhythm\n"
-        "- Never make all slides identical in layout\n\n"
-        "# LAYOUT SELECTION RULES\n"
-        "1. Match layout to content purpose:\n"
-        "   - Title → hero layout\n"
-        "   - Problem → image-left-text-right\n"
-        "   - Solution → split-modern\n"
-        "   - Market → chart or data-heavy layout\n"
-        "   - Team → photo grid\n"
-        "   - Roadmap → timeline-modern\n"
-        "   - CTA → center-cta-gradient\n\n"
-        "2. Ensure flow and variety across slides.\n"
-        "3. Prioritize clarity, color balance, and audience engagement.\n\n"
-        f"{user_instructions}\n\n"
-        f"Now, assign a layout index for each of the {n_slides} slides based on purpose and tone.\n\n"
-        "Output JSON with a top-level `slides` array, where each item contains:\n"
-        "  - title (string)\n"
-        "  - layout_id (int)\n"
-        "  - bullets (list of strings)\n"
-        "  - visuals (optional list of strings)\n"
-        "Return valid JSON only."
-    )
+    def __init__(self, **data):
+        super().__init__(**data)
+        themes = get_visual_theme("hybrid")
 
-    return [
-        LLMSystemMessage(content=system_prompt),
-        LLMUserMessage(content=data),
-    ]
+        self.slides = [
+            SlideLayout(
+                id=1,
+                type="title",
+                style="hero-gradient",
+                color_scheme=themes.get("hero", {}).get("color", "#6C63FF"),
+                visual=themes.get("hero", {}).get("visual", "gradient-bg"),
+                notes="Bold gradient hero title with startup name, tagline, and logo space."
+            ),
+            SlideLayout(
+                id=2,
+                type="problem",
+                style="image-left-text-right",
+                color_scheme=themes.get("problem", {}).get("color", "#F5F7FB"),
+                visual="photo-office-team",
+                notes="Left-side image, right-side bullet points of problems with bold headings."
+            ),
+            SlideLayout(
+                id=3,
+                type="solution",
+                style="split-modern",
+                color_scheme=themes.get("solution", {}).get("color", "#EEF1FF"),
+                visual="product-ui-screenshot",
+                notes="Split layout with product visuals or screenshots and clean typography."
+            ),
+            SlideLayout(
+                id=4,
+                type="market",
+                style="data-chart",
+                color_scheme=themes.get("market", {}).get("color", "#E9F5FF"),
+                visual="bar-chart-placeholder",
+                notes="Market size chart with opportunity highlights and metrics."
+            ),
+            SlideLayout(
+                id=5,
+                type="features",
+                style="image-cards",
+                color_scheme=themes.get("features", {}).get("color", "#F9F9FF"),
+                visual="icons-grid",
+                notes="Feature cards with icons and small descriptions."
+            ),
+            SlideLayout(
+                id=6,
+                type="traction",
+                style="chart-focus",
+                color_scheme=themes.get("traction", {}).get("color", "#DDF2FF"),
+                visual="growth-line-chart",
+                notes="Clean chart layout for growth metrics and KPIs."
+            ),
+            SlideLayout(
+                id=7,
+                type="team",
+                style="photo-grid",
+                color_scheme=themes.get("team", {}).get("color", "#FFFFFF"),
+                visual="avatar-cards",
+                notes="Photos of team members with roles and social icons."
+            ),
+            SlideLayout(
+                id=8,
+                type="roadmap",
+                style="timeline-modern",
+                color_scheme=themes.get("roadmap", {}).get("color", "#F2F8FF"),
+                visual="timeline-icons",
+                notes="Milestone-based roadmap with gradient timeline."
+            ),
+            SlideLayout(
+                id=9,
+                type="financials",
+                style="chart-double",
+                color_scheme=themes.get("financials", {}).get("color", "#E6F0FF"),
+                visual="dual-chart-placeholder",
+                notes="Two charts: revenue & projections with bold white heading."
+            ),
+            SlideLayout(
+                id=10,
+                type="cta",
+                style="center-cta-gradient",
+                color_scheme=themes.get("cta", {}).get("color", "#6C63FF"),
+                visual="gradient-wave",
+                notes="Final call-to-action slide with gradient background and centered text."
+            ),
+            SlideLayout(
+                id=11,
+                type="quote",
+                style="highlight-bold",
+                color_scheme=themes.get("quote", {}).get("color", "#F4F4F6"),
+                visual="minimal-abstract",
+                notes="Single bold quote or tagline centered with visual emphasis."
+            ),
+            SlideLayout(
+                id=12,
+                type="comparison",
+                style="two-column",
+                color_scheme=themes.get("comparison", {}).get("color", "#FFFFFF"),
+                visual="before-after-illustration",
+                notes="Side-by-side comparison layout for transformation visuals."
+            ),
+        ]
 
+    def to_string(self) -> str:
+        """
+        Convert this layout into a readable summary string for LLM context.
+        Helps Gemini understand available slide types and visual patterns.
+        """
+        summary = "# HYBRID PRESENTON LAYOUT OVERVIEW\n"
+        summary += f"Theme: {self.name}\n"
+        summary += "Each layout combines modern gradient visuals and clean data presentation.\n\n"
 
-def get_messages_for_slides_markdown(
-    presentation_layout: PresentationLayoutModel,
-    n_slides: int,
-    data: str,
-    instructions: Optional[str] = None,
-):
-    """Same as get_messages() but for prewritten markdown slides."""
-    user_instructions = ""
-    if instructions:
-        user_instructions = "# User Instruction:\n" + instructions
-
-    system_prompt = (
-        "You're a presentation design expert creating a structure for pre-written slides.\n\n"
-        f"{presentation_layout.to_string()}\n\n"
-        f"{user_instructions}\n\n"
-        f"Select the most appropriate layout for each of the {n_slides} slides "
-        "from the hybrid presentation layout list.\n\n"
-        "Output JSON with a top-level `slides` array where each entry contains:\n"
-        "  - title (string)\n"
-        "  - layout_id (int)\n"
-        "  - bullets (list of strings)\n"
-        "Return valid JSON only."
-    )
-
-    return [
-        LLMSystemMessage(content=system_prompt),
-        LLMUserMessage(content=data),
-    ]
-
-
-async def generate_presentation_structure(
-    presentation_outline: PresentationOutlineModel,
-    presentation_layout: PresentationLayoutModel,
-    instructions: Optional[str] = None,
-    using_slides_markdown: bool = False,
-) -> PresentationStructureModel:
-    """Generate the slide → layout mapping using the hybrid layout."""
-    client = LLMClient()
-    model = get_model()
-
-    n_slides = len(getattr(presentation_outline, "slides", []) or [])
-    if n_slides <= 0:
-        n_slides = 10
-
-    # dynamic expected schema helper (keeps compatibility with existing code)
-    response_model = get_presentation_structure_model_with_n_slides(n_slides)
-    response_schema = response_model.model_json_schema() if hasattr(response_model, "model_json_schema") else {}
-
-    try:
-        # prepare messages
-        data_string = _outline_to_string(presentation_outline)
-        if using_slides_markdown:
-            messages = get_messages_for_slides_markdown(
-                presentation_layout, n_slides, data_string, instructions
+        for slide in self.slides:
+            summary += (
+                f"- [{slide.id}] {slide.type.upper()} | Style: {slide.style} | "
+                f"Color: {slide.color_scheme} | Visual: {slide.visual or 'N/A'}\n"
+                f"  → {slide.notes}\n\n"
             )
-        else:
-            messages = get_messages(presentation_layout, n_slides, data_string, instructions)
 
-        # ask the LLM for structured output
-        response = await client.generate_structured(
-            model=model,
-            messages=messages,
-            response_format=response_schema,
-            strict=True,
-        )
+        return summary.strip()
 
-        # Response may already be a dict (parsed), or a JSON string.
-        if isinstance(response, str):
-            try:
-                parsed = json.loads(response)
-            except Exception:
-                m = re.search(r"(\{.*\})", response, re.DOTALL)
-                if m:
-                    parsed = json.loads(m.group(1))
-                else:
-                    raise ValueError("LLM returned non-JSON response")
-        elif isinstance(response, dict):
-            parsed = response
-        else:
-            # try convert complex objects
-            try:
-                parsed = json.loads(json.dumps(response))
-            except Exception:
-                raise ValueError("Unsupported response type from LLM")
-
-        # Validate essential shape
-        if not isinstance(parsed, dict) or "slides" not in parsed or not isinstance(parsed["slides"], list):
-            raise ValueError("Parsed LLM response does not contain required 'slides' list")
-
-        # Build and return the Pydantic model
-        return PresentationStructureModel(**parsed)
-
-    except Exception as e:
-        # Bubble to the centralized handler with enriched context
-        print("🔥 DEBUG: generate_presentation_structure failed:", repr(e))
-        traceback.print_exc()
-        raise handle_llm_client_exceptions(e)
 
 
