@@ -84,6 +84,12 @@ class LLMClient:
                     raise RuntimeError("google-generativeai not installed.")
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
+
+                # Ensure prompt is string-safe
+                if isinstance(prompt, (list, dict)):
+                    import json
+                    prompt = json.dumps(prompt, ensure_ascii=False)
+
                 response = await asyncio.to_thread(gem_model.generate_content, prompt)
                 return getattr(response, "text", str(response))
 
@@ -188,9 +194,6 @@ class LLMClient:
             raise HTTPException(status_code=500, detail=f"stream_structured failed: {str(e)}")
 
     # ===========================================================
-    # 🧩 GENERATE_STRUCTURED — REQUIRED BY PRESENTON
-    # ===========================================================
-        # ===========================================================
     # 🧩 GENERATE_STRUCTURED — FIXED & VALIDATED
     # ===========================================================
     async def generate_structured(
@@ -216,18 +219,21 @@ class LLMClient:
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
 
-                # 🧩 Fix: Normalize message content into a single string
+                # 🧠 Fix: Normalize messages into a single string
                 import json
                 prompt_text_parts = []
                 for m in messages:
                     if hasattr(m, "content"):
-                        if isinstance(m.content, (list, dict)):
-                            prompt_text_parts.append(json.dumps(m.content, ensure_ascii=False))
-                        else:
-                            prompt_text_parts.append(str(m.content))
+                        content = m.content
                     else:
-                        prompt_text_parts.append(str(m))
+                        content = m
+                    if isinstance(content, (list, dict)):
+                        prompt_text_parts.append(json.dumps(content, ensure_ascii=False))
+                    else:
+                        prompt_text_parts.append(str(content))
                 prompt_text = "\n".join(prompt_text_parts)
+
+                print("🧩 Gemini Prompt Type:", type(prompt_text), "Length:", len(prompt_text))
 
                 response = await asyncio.to_thread(
                     gem_model.generate_content,
@@ -256,48 +262,6 @@ class LLMClient:
                     response_format={"type": "json_schema", "json_schema": response_format},
                 )
 
-                return json.loads(resp.choices[0].message.content)
-
-            # === ANTHROPIC ===
-            elif provider.startswith("anthropic"):
-                if not AsyncAnthropic:
-                    raise RuntimeError("anthropic not installed.")
-                client = AsyncAnthropic(api_key=self.anthropic_api_key)
-                resp = await client.messages.create(
-                    model=model or "claude-3-opus-20240229",
-                    max_tokens=1500,
-                    messages=[{"role": "user", "content": str(messages)}],
-                )
-
-                try:
-                    return json.loads(resp.content[0].text)
-                except Exception:
-                    if strict:
-                        raise
-                    return {"raw": resp.content[0].text}
-
-            else:
-                raise ValueError(f"Unsupported provider: {provider}")
-
-        except Exception as e:
-            print(f"❌ LLMClient.generate_structured() failed: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"LLMClient.generate_structured() failed: {str(e)}",
-            )
-
-
-            # === OPENAI ===
-            elif provider.startswith("openai"):
-                if not AsyncOpenAI:
-                    raise RuntimeError("openai not installed.")
-                client = AsyncOpenAI(api_key=self.openai_api_key)
-                resp = await client.chat.completions.create(
-                    model=model or "gpt-4o-mini",
-                    messages=[{"role": "user", "content": str(messages)}],
-                    response_format={"type": "json_schema", "json_schema": response_format},
-                )
-
                 import json
                 return json.loads(resp.choices[0].message.content)
 
@@ -330,5 +294,4 @@ class LLMClient:
                 detail=f"LLMClient.generate_structured() failed: {str(e)}",
             )
 
-
-
+         
