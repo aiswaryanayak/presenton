@@ -190,6 +190,9 @@ class LLMClient:
     # ===========================================================
     # 🧩 GENERATE_STRUCTURED — REQUIRED BY PRESENTON
     # ===========================================================
+        # ===========================================================
+    # 🧩 GENERATE_STRUCTURED — FIXED & VALIDATED
+    # ===========================================================
     async def generate_structured(
         self,
         model: str,
@@ -213,16 +216,25 @@ class LLMClient:
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
 
-                prompt_text = "\n".join(
-                    [m.content if hasattr(m, "content") else str(m) for m in messages]
-                )
+                # 🧩 Fix: Normalize message content into a single string
+                import json
+                prompt_text_parts = []
+                for m in messages:
+                    if hasattr(m, "content"):
+                        if isinstance(m.content, (list, dict)):
+                            prompt_text_parts.append(json.dumps(m.content, ensure_ascii=False))
+                        else:
+                            prompt_text_parts.append(str(m.content))
+                    else:
+                        prompt_text_parts.append(str(m))
+                prompt_text = "\n".join(prompt_text_parts)
 
                 response = await asyncio.to_thread(
                     gem_model.generate_content,
-                    f"{prompt_text}\n\nReturn valid JSON strictly matching this schema:\n{response_format}",
+                    f"{prompt_text}\n\nReturn valid JSON strictly matching this schema:\n{json.dumps(response_format, ensure_ascii=False)}",
                 )
 
-                import json, re
+                import re
                 try:
                     return json.loads(response.text)
                 except Exception:
@@ -232,6 +244,48 @@ class LLMClient:
                     if strict:
                         raise ValueError("Gemini returned invalid JSON.")
                     return {"raw": response.text}
+
+            # === OPENAI ===
+            elif provider.startswith("openai"):
+                if not AsyncOpenAI:
+                    raise RuntimeError("openai not installed.")
+                client = AsyncOpenAI(api_key=self.openai_api_key)
+                resp = await client.chat.completions.create(
+                    model=model or "gpt-4o-mini",
+                    messages=[{"role": "user", "content": str(messages)}],
+                    response_format={"type": "json_schema", "json_schema": response_format},
+                )
+
+                return json.loads(resp.choices[0].message.content)
+
+            # === ANTHROPIC ===
+            elif provider.startswith("anthropic"):
+                if not AsyncAnthropic:
+                    raise RuntimeError("anthropic not installed.")
+                client = AsyncAnthropic(api_key=self.anthropic_api_key)
+                resp = await client.messages.create(
+                    model=model or "claude-3-opus-20240229",
+                    max_tokens=1500,
+                    messages=[{"role": "user", "content": str(messages)}],
+                )
+
+                try:
+                    return json.loads(resp.content[0].text)
+                except Exception:
+                    if strict:
+                        raise
+                    return {"raw": resp.content[0].text}
+
+            else:
+                raise ValueError(f"Unsupported provider: {provider}")
+
+        except Exception as e:
+            print(f"❌ LLMClient.generate_structured() failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLMClient.generate_structured() failed: {str(e)}",
+            )
+
 
             # === OPENAI ===
             elif provider.startswith("openai"):
