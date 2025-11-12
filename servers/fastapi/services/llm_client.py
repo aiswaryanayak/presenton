@@ -66,24 +66,38 @@ class LLMClient:
             return provider.lower()
         return str(provider).lower()
 
+      # ===========================================================
+    # 🧠 GENERATE_TEXT — alias for Presenton compatibility
     # ===========================================================
-    # 🧠 GENERATE — handles Gemini / OpenAI / Anthropic
-    # ===========================================================
-    async def generate(
+    async def generate_text(
         self,
-        prompt: str,
-        provider: Optional[Any] = "google",
-        model: Optional[str] = None,
+        model: str,
+        messages: list,
+        provider: Optional[str] = "google",
         **kwargs,
     ):
-        provider = self._normalize_provider(provider)
+        """
+        Compatibility wrapper for files calling .generate_text().
+        Joins all message contents into one prompt and calls .generate().
+        """
         try:
-            # ---- Google Gemini ----
-            if provider.startswith("google"):
-                if not genai:
-                    raise RuntimeError("google-generativeai not installed.")
-                model_name = model or self.gemini_model_name
-                gem_model = genai.GenerativeModel(model_name)
+            # combine messages (system/user objects or plain strings)
+            prompt_parts = []
+            for m in messages:
+                if hasattr(m, "content"):
+                    prompt_parts.append(str(m.content))
+                elif isinstance(m, dict) and "content" in m:
+                    prompt_parts.append(str(m["content"]))
+                else:
+                    prompt_parts.append(str(m))
+            prompt = "\n".join(prompt_parts)
+
+            return await self.generate(prompt=prompt, provider=provider, model=model, **kwargs)
+
+        except Exception as e:
+            print("⚠️ LLMClient.generate_text() failed:", e)
+            raise HTTPException(status_code=500, detail=f"LLMClient.generate_text() failed: {str(e)}")
+
 
                 # Ensure prompt is string-safe
                 if isinstance(prompt, (list, dict)):
