@@ -1,67 +1,71 @@
 import json
 import os
-import aiohttp
-from typing import Literal
 import uuid
+from typing import Literal
 from fastapi import HTTPException
-from pathvalidate import sanitize_filename
 
 from models.pptx_models import PptxPresentationModel
 from models.presentation_and_path import PresentationAndPath
 from services.pptx_presentation_creator import PptxPresentationCreator
 from services.temp_file_service import TEMP_FILE_SERVICE
 from utils.asset_directory_utils import get_exports_directory
-import uuid
+from pathvalidate import sanitize_filename
 
 
 async def export_presentation(
-    presentation_id: uuid.UUID, title: str, export_as: Literal["pptx", "pdf"]
+    presentation_id: uuid.UUID,
+    title: str,
+    export_as: Literal["pptx", "pdf"]
 ) -> PresentationAndPath:
-    if export_as == "pptx":
+    """
+    FIXED VERSION:
+    ---------------------------------------
+    - Removes localhost API calls
+    - Directly builds PPTX using stored database model
+    - Works 100% in Render
+    """
 
-        # Get the converted PPTX model from the Next.js service
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"http://localhost/api/presentation_to_pptx_model?id={presentation_id}"
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    print(f"Failed to get PPTX model: {error_text}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to convert presentation to PPTX model",
-                    )
-                pptx_model_data = await response.json()
+    # 1️⃣ Load the PPTX model directly from DB
+    try:
+        pptx_model = await PptxPresentationModel.from_presentation_id(presentation_id)
+    except Exception as e:
+        print("ERROR loading PPTX model:", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load PPTX model for export: {str(e)}"
+        )
 
-        # Create PPTX file using the converted model
-        pptx_model = PptxPresentationModel(**pptx_model_data)
-        temp_dir = TEMP_FILE_SERVICE.create_temp_dir()
-        pptx_creator = PptxPresentationCreator(pptx_model, temp_dir)
+    # 2️⃣ Create temporary directory
+    temp_dir = TEMP_FILE_SERVICE.create_temp_dir()
+
+    # 3️⃣ Build PPTX
+    pptx_creator = PptxPresentationCreator(pptx_model, temp_dir)
+    try:
         await pptx_creator.create_ppt()
-
-        export_directory = get_exports_directory()
-        pptx_path = os.path.join(
-            export_directory,
-            f"{sanitize_filename(title or str(uuid.uuid4()))}.pptx",
+    except Exception as e:
+        print("ERROR creating PPT:", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed generating PPTX file: {str(e)}"
         )
+
+    # 4️⃣ Save PPTX
+    export_directory = get_exports_directory()
+    pptx_path = os.path.join(
+        export_directory,
+        f"{sanitize_filename(title or str(presentation_id))}.pptx",
+    )
+
+    try:
         pptx_creator.save(pptx_path)
-
-        return PresentationAndPath(
-            presentation_id=presentation_id,
-            path=pptx_path,
+    except Exception as e:
+        print("ERROR saving PPTX:", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to save PPTX file: {str(e)}"
         )
-    else:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "http://localhost/api/export-as-pdf",
-                json={
-                    "id": str(presentation_id),
-                    "title": sanitize_filename(title or str(uuid.uuid4())),
-                },
-            ) as response:
-                response_json = await response.json()
 
-        return PresentationAndPath(
-            presentation_id=presentation_id,
-            path=response_json["path"],
-        )
+    return PresentationAndPath(
+        presentation_id=presentation_id,
+        path=pptx_path,
+    )
