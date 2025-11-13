@@ -1,176 +1,174 @@
-from typing import List, Optional, Union
+# servers/fastapi/models/pptx_models.py
+from __future__ import annotations
 from enum import Enum
-from pydantic import BaseModel
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field
 
 
-# ----------------------------------------------------
-# GLOBAL MODEL CONFIG (needed for enums in Pydantic v2)
-# ----------------------------------------------------
-class PptxBaseModel(BaseModel):
-    model_config = {"arbitrary_types_allowed": True}
+# -------------------------
+# Enums
+# -------------------------
+class PptxBoxShapeEnum(int, Enum):
+    RECTANGLE = 1
+    ROUND_RECTANGLE = 2
+    ELLIPSE = 3
+    CIRCLE = 4
+    # add more if needed
 
 
-# ----------------------------------------------------
-# Position & Spacing
-# ----------------------------------------------------
-class PptxPositionModel(PptxBaseModel):
-    left: int
-    top: int
-    width: int
-    height: int
+class PptxObjectFitEnum(str, Enum):
+    CONTAIN = "contain"
+    COVER = "cover"
+    FILL = "fill"
+
+
+# -------------------------
+# Small helper models
+# -------------------------
+class PptxFontModel(BaseModel):
+    name: Optional[str] = None
+    size: Optional[float] = None
+    color: Optional[str] = None
+    font_weight: Optional[int] = None
+    italic: Optional[bool] = False
+    underline: Optional[bool] = False
+    strike: Optional[bool] = False
+
+    model_config = {"extra": "allow"}
+
+
+class PptxTextRunModel(BaseModel):
+    text: str = ""
+    font: Optional[PptxFontModel] = None
+
+    model_config = {"extra": "allow"}
+
+
+class PptxParagraphModel(BaseModel):
+    text: Optional[str] = None
+    text_runs: Optional[List[PptxTextRunModel]] = None
+    spacing: Optional[dict] = None
+    line_height: Optional[float] = None
+    alignment: Optional[str] = None
+    font: Optional[PptxFontModel] = None
+
+    model_config = {"extra": "allow"}
+
+
+class PptxPositionModel(BaseModel):
+    left: int = 0
+    top: int = 0
+    width: int = 100
+    height: int = 100
 
     def to_pt_list(self):
+        # your service expects this method
         return [self.left, self.top, self.width, self.height]
 
     def to_pt_xyxy(self):
+        # approximate for connector add
         return [self.left, self.top, self.left + self.width, self.top + self.height]
 
 
-class PptxSpacingModel(PptxBaseModel):
-    top: int = 0
-    bottom: int = 0
+class PptxSpacingModel(BaseModel):
     left: int = 0
+    top: int = 0
     right: int = 0
+    bottom: int = 0
 
 
-# ----------------------------------------------------
-# Font & Text
-# ----------------------------------------------------
-class PptxFontModel(PptxBaseModel):
-    name: Optional[str] = None
-    size: Optional[int] = None
-    color: Optional[str] = None
-    bold: Optional[bool] = None
-    italic: Optional[bool] = None
-    underline: Optional[bool] = None
-    strike: Optional[bool] = None
-    font_weight: Optional[int] = None
-
-
-class PptxTextRunModel(PptxBaseModel):
-    text: str
-    font: Optional[PptxFontModel] = None
-
-
-class PptxParagraphModel(PptxBaseModel):
-    text: Optional[str] = None
-    text_runs: Optional[List[PptxTextRunModel]] = None
-    alignment: Optional[str] = None
-    spacing: Optional[PptxSpacingModel] = None
-    font: Optional[PptxFontModel] = None
-    line_height: Optional[float] = None
-
-
-# ----------------------------------------------------
-# Fill & Stroke
-# ----------------------------------------------------
-class PptxFillModel(PptxBaseModel):
-    color: str = "#FFFFFF"
-    opacity: float = 1.0
-
-
-class PptxStrokeModel(PptxBaseModel):
-    color: str = "#000000"
-    thickness: int = 0
-    opacity: float = 1.0
-
-
-class PptxShadowModel(PptxBaseModel):
-    color: str = "000000"
-    angle: float = 45
-    offset: int = 5
-    radius: int = 5
-    opacity: float = 0.5
-
-
-# ----------------------------------------------------
-# Picture / ObjectFit
-# ----------------------------------------------------
-class PptxObjectFitEnum(str, Enum):
-    CONTAIN = "CONTAIN"
-    COVER = "COVER"
-    FILL = "FILL"
-
-
-class PptxObjectFitModel(PptxBaseModel):
+# -------------------------
+# Object-Fit Model used by image utils
+# -------------------------
+class PptxObjectFitModel(BaseModel):
     fit: Optional[PptxObjectFitEnum] = None
-    focus: Optional[List[float]] = None  # [x, y]
+    focus: Optional[List[float]] = None  # [x_percent, y_percent]
+
+    model_config = {"extra": "allow"}
 
 
-class PptxPictureModel(PptxBaseModel):
+# -------------------------
+# Visuals / Fill / Stroke / Shadow
+# -------------------------
+class PptxFillModel(BaseModel):
+    color: Optional[str] = "#FFFFFF"
+    opacity: Optional[float] = 1.0
+
+
+class PptxStrokeModel(BaseModel):
+    color: Optional[str] = "#000000"
+    thickness: Optional[float] = 1.0
+    opacity: Optional[float] = 1.0
+
+
+class PptxShadowModel(BaseModel):
+    color: str = "000000"
+    radius: float = 4.0
+    offset: float = 2.0
+    angle: float = 0.0
+    opacity: float = 0.3
+
+
+# -------------------------
+# Picture, Textbox, Autoshape, Connector models
+# -------------------------
+class PptxPictureRefModel(BaseModel):
     path: Optional[str] = None
-    is_network: bool = False
+    is_network: Optional[bool] = False
 
 
-# ----------------------------------------------------
-# Shape Types
-# ----------------------------------------------------
-class PptxBoxShapeEnum(str, Enum):
-    RECTANGLE = "RECTANGLE"
-    CIRCLE = "CIRCLE"
-
-
-class PptxAutoShapeBoxModel(PptxBaseModel):
-    type: int = 1
+class PptxPictureBoxModel(BaseModel):
+    picture: PptxPictureRefModel
     position: PptxPositionModel
-    paragraphs: Optional[List[PptxParagraphModel]] = None
+    margin: Optional[PptxSpacingModel] = None
+    border_radius: Optional[Union[List[int], int]] = None
+    object_fit: Optional[PptxObjectFitModel] = None
+    clip: Optional[bool] = False
+    shape: Optional[PptxBoxShapeEnum] = None
+    invert: Optional[bool] = False
+    opacity: Optional[float] = None
+
+
+class PptxTextBoxModel(BaseModel):
+    position: PptxPositionModel
+    paragraphs: Optional[List[PptxParagraphModel]] = []
+    text_wrap: Optional[bool] = True
+    margin: Optional[PptxSpacingModel] = None
+    fill: Optional[PptxFillModel] = None
+
+
+class PptxAutoShapeBoxModel(BaseModel):
+    type: int
+    position: PptxPositionModel
+    paragraphs: Optional[List[PptxParagraphModel]] = []
+    text_wrap: Optional[bool] = True
     fill: Optional[PptxFillModel] = None
     stroke: Optional[PptxStrokeModel] = None
     shadow: Optional[PptxShadowModel] = None
-    margin: Optional[PptxSpacingModel] = None
-    border_radius: Optional[int] = None
-    text_wrap: bool = True
+    border_radius: Optional[Union[int, List[int]]] = None
 
 
-class PptxPictureBoxModel(PptxBaseModel):
-    picture: PptxPictureModel
-    position: PptxPositionModel
-    object_fit: Optional[PptxObjectFitModel] = None
-    border_radius: Optional[List[int]] = None
-    shape: Optional[PptxBoxShapeEnum] = None
-    opacity: Optional[float] = None
-    invert: Optional[bool] = None
-    clip: Optional[bool] = None
-    margin: Optional[PptxSpacingModel] = None
-
-
-class PptxTextBoxModel(PptxBaseModel):
-    position: PptxPositionModel
-    paragraphs: List[PptxParagraphModel]
-    fill: Optional[PptxFillModel] = None
-    margin: Optional[PptxSpacingModel] = None
-    text_wrap: bool = True
-
-
-class PptxConnectorModel(PptxBaseModel):
+class PptxConnectorModel(BaseModel):
     type: int
     position: PptxPositionModel
+    thickness: float = 1.0
     color: str = "000000"
-    thickness: int = 2
-    opacity: float = 1.0
+    opacity: Optional[float] = 1.0
 
 
-# ----------------------------------------------------
-# Slide + Presentation
-# ----------------------------------------------------
-class PptxSlideModel(PptxBaseModel):
-    shapes: Optional[List[
-        Union[PptxAutoShapeBoxModel,
-              PptxPictureBoxModel,
-              PptxTextBoxModel,
-              PptxConnectorModel]
-    ]] = None
-
-    background: Optional[PptxFillModel] = None
+# -------------------------
+# Slide / Presentation model (simplified)
+# -------------------------
+class PptxSlideModel(BaseModel):
+    index: Optional[int] = 0
     note: Optional[str] = None
+    shapes: Optional[List[Union[PptxPictureBoxModel, PptxTextBoxModel, PptxAutoShapeBoxModel, PptxConnectorModel]]] = []
+    background: Optional[PptxFillModel] = None
 
 
-class PptxPresentationModel(PptxBaseModel):
-    slides: Optional[List[PptxSlideModel]] = None
-    shapes: Optional[List[
-        Union[PptxAutoShapeBoxModel,
-              PptxPictureBoxModel,
-              PptxTextBoxModel,
-              PptxConnectorModel]
-    ]] = None
+class PptxPresentationModel(BaseModel):
+    title: Optional[str] = None
+    slides: Optional[List[PptxSlideModel]] = []
+    shapes: Optional[List[Union[PptxPictureBoxModel, PptxAutoShapeBoxModel, PptxTextBoxModel]]] = []
 
+    model_config = {"extra": "allow"}
