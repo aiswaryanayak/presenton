@@ -228,7 +228,8 @@ class PptxPresentationCreator:
             )
             connector_shape.line.width = Pt(connector_model.thickness)
             connector_shape.line.color.rgb = RGBColor.from_string(connector_model.color)
-            self.set_fill_opacity(connector_shape, connector_model.opacity)
+            self.set_fill_opacity(connector_shape.line.fill, connector_model.opacity)
+
         except Exception as e:
             print("⚠️ add_connector failed:", e)
 
