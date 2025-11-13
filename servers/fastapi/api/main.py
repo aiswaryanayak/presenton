@@ -31,12 +31,16 @@ app.include_router(PRESENTATION_ROUTER)
 # ---------------------------------------------------------------- #
 # ✅ Configure CORS (for Vercel + local dev + Render)
 # ---------------------------------------------------------------- #
-origins = [
-    "https://ai-fundraising-support.vercel.app",   # production frontend
-    "https://ai-fundraising-support.vercel.com",   # alt domain
-    "http://localhost:3000",                       # local dev
-    "https://presenton-1h7p.onrender.com",         # backend Render origin
-]
+# ---------------------------------------------------------------- #
+# ✅ Configure CORS (works for Vercel + localhost + Render)
+# ---------------------------------------------------------------- #
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https://.*",       # allow ALL https origins temporarily
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.add_middleware(
     CORSMiddleware,
