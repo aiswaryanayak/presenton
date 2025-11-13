@@ -16,9 +16,7 @@ from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
 
-from services.html_to_text_runs_service import (
-    parse_html_text_to_text_runs as parse_inline_html_to_runs
-)
+
 
 from utils.download_helpers import download_files
 from utils.image_utils import (
@@ -310,7 +308,10 @@ class PptxPresentationCreator:
             print("⚠️ populate paragraph failed:", e)
 
     def parse_html_text_to_text_runs(self, font, text):
-        return parse_inline_html_to_runs(text, font)
+    # FIX: import here to avoid circular import
+    from services.html_to_text_runs_service import parse_html_text_to_text_runs
+    return parse_html_text_to_text_runs(text, font)
+
 
     def populate_text_run(self, r: _Run, model: PptxTextRunModel):
         try:
