@@ -42,7 +42,7 @@ from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
     HybridPresentonLayout as PresentationLayoutModel,
 )
 
-PRESENTATION_ROUTER = APIRouter(prefix="/presentation", tags=["Presentation"]) 
+PRESENTATION_ROUTER = APIRouter(prefix="/presentation", tags=["Presentation"])
 
 
 # -------------------------
@@ -178,6 +178,78 @@ async def _normalize_outlines_slides(outlines_json: dict, n_slides: int) -> dict
     return {"slides": normalized}
 
 
+def _validate_and_coerce_structure_for_export(structure: dict) -> dict:
+    """
+    Ensure `structure` is a dict with a `slides` list and each slide has the expected types:
+      - title: str
+      - layout_id: int
+      - bullets: list[str]
+      - visuals: list[str]
+      - chart_type: Optional[str]
+      - summary: Optional[str]
+    This function coerces types where possible (e.g., bullets string -> [string]).
+    """
+    if not isinstance(structure, dict):
+        raise ValueError("presentation.structure must be a dict")
+
+    slides = structure.get("slides")
+    if slides is None or not isinstance(slides, list):
+        raise ValueError("presentation.structure must contain a 'slides' list")
+
+    normalized = []
+    for i, s in enumerate(slides):
+        if not isinstance(s, dict):
+            # try to coerce simple forms
+            if isinstance(s, str):
+                sdict = {"title": s, "layout_id": i + 1, "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
+            elif isinstance(s, int):
+                sdict = {"title": f"Slide {i+1}", "layout_id": int(s), "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
+            else:
+                sdict = {"title": f"Slide {i+1}", "layout_id": i + 1, "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
+        else:
+            sdict = dict(s)  # shallow copy
+
+        # Title
+        sdict["title"] = str(sdict.get("title", f"Slide {i+1}") or f"Slide {i+1}")
+
+        # layout_id -> int
+        try:
+            sdict["layout_id"] = int(sdict.get("layout_id", i + 1) or (i + 1))
+        except Exception:
+            sdict["layout_id"] = i + 1
+
+        # bullets -> list[str]
+        bullets = sdict.get("bullets", [])
+        if isinstance(bullets, str):
+            bullets = [bullets]
+        elif bullets is None:
+            bullets = []
+        elif not isinstance(bullets, list):
+            bullets = [str(bullets)]
+        # ensure all bullets are strings
+        bullets = [str(x) for x in bullets]
+        sdict["bullets"] = bullets
+
+        # visuals -> list[str]
+        visuals = sdict.get("visuals", [])
+        if isinstance(visuals, str):
+            visuals = [visuals]
+        elif visuals is None:
+            visuals = []
+        elif not isinstance(visuals, list):
+            visuals = [str(visuals)]
+        visuals = [str(x) for x in visuals]
+        sdict["visuals"] = visuals
+
+        # chart_type & summary
+        sdict["chart_type"] = None if sdict.get("chart_type") is None else str(sdict.get("chart_type"))
+        sdict["summary"] = "" if sdict.get("summary") is None else str(sdict.get("summary"))
+
+        normalized.append(sdict)
+
+    return {"slides": normalized}
+
+
 async def generate_presentation_handler(
     request: GeneratePresentationRequest,
     presentation_id: uuid.UUID,
@@ -206,7 +278,7 @@ async def generate_presentation_handler(
                 request.web_search,
             ):
                 # normalize chunk into string
-                if isinstance(chunk, dict) or isinstance(chunk, list):
+                if isinstance(chunk, (dict, list)):
                     try:
                         text_data += json.dumps(chunk, ensure_ascii=False)
                     except Exception:
@@ -336,16 +408,44 @@ async def generate_presentation_handler(
         sql_session.add_all(generated_assets)
         await sql_session.commit()
 
-        presentation_path = await export_presentation(
-            presentation_id,
-            presentation.title or str(uuid.uuid4()),
-            request.export_as,
-        )
+        # --- DEBUG: print structure before export (very important) ---
+        try:
+            debug_structure = presentation.structure if hasattr(presentation, "structure") else {}
+        except Exception:
+            debug_structure = {}
+        print("🧩 DEBUG Presentation Structure (pre-export):", json.dumps(debug_structure, ensure_ascii=False) if isinstance(debug_structure, (dict, list)) else str(debug_structure))
+
+        # Validate / coerce structure for export so PPTX exporter won't fail on minor type issues.
+        try:
+            coerced_structure = _validate_and_coerce_structure_for_export(presentation.structure if isinstance(presentation.structure, dict) else (presentation.structure.model_dump() if hasattr(presentation.structure, "model_dump") else presentation.structure))
+        except Exception as ex:
+            # If we cannot coerce, fail with a clear message
+            print("🔥 ERROR: structure validation/coercion failed:", repr(ex))
+            raise HTTPException(status_code=500, detail=f"Presentation structure invalid for export: {str(ex)}")
+
+        # assign back coerced structure for exporter and DB consistency
+        presentation.structure = coerced_structure
+
+        # Export — catch exporter errors and return clearer message
+        try:
+            presentation_path = await export_presentation(
+                presentation_id,
+                presentation.title or str(uuid.uuid4()),
+                request.export_as,
+            )
+        except Exception as ex:
+            print("🔥 ERROR: export_presentation failed:", repr(ex))
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Failed to convert presentation to {request.export_as} model: {str(ex)}")
+
         return PresentationPathAndEditPath(
             **presentation_path.model_dump(),
             edit_path=f"/presentation?id={presentation_id}",
         )
 
+    except HTTPException:
+        # re-raise already formatted HTTP errors
+        raise
     except Exception as e:
         print("🔥 DEBUG: Presentation generation failed:", repr(e))
         traceback.print_exc()
