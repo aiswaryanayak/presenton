@@ -4,19 +4,15 @@ import uuid
 from typing import List, Optional
 
 from lxml import etree
-from lxml.etree import fromstring, tostring
 from PIL import Image
 
 from pptx import Presentation
 from pptx.shapes.autoshape import Shape
 from pptx.slide import Slide
-from pptx.text.text import _Paragraph, TextFrame, Font, _Run
-from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.text.text import _Paragraph, TextFrame, _Run
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
-
-
 
 from utils.download_helpers import download_files
 from utils.image_utils import (
@@ -33,7 +29,6 @@ from models.pptx_models import (
     PptxBoxShapeEnum,
     PptxConnectorModel,
     PptxFillModel,
-    PptxFontModel,
     PptxParagraphModel,
     PptxPictureBoxModel,
     PptxPositionModel,
@@ -45,7 +40,6 @@ from models.pptx_models import (
     PptxTextBoxModel,
     PptxTextRunModel,
 )
-
 
 BLANK_SLIDE_LAYOUT = 6
 
@@ -77,7 +71,7 @@ class PptxPresentationCreator:
         image_urls = []
         models = []
 
-        # global shapes
+        # Global shapes
         for shape in self._ppt_model.shapes or []:
             if isinstance(shape, PptxPictureBoxModel):
                 path = shape.picture.path
@@ -85,7 +79,7 @@ class PptxPresentationCreator:
                     image_urls.append(path)
                     models.append(shape)
 
-        # slide shapes
+        # Slide shapes
         for slide in self._slide_models:
             for shape in slide.shapes or []:
                 if isinstance(shape, PptxPictureBoxModel):
@@ -121,8 +115,8 @@ class PptxPresentationCreator:
             local_shapes = list(slide_model.shapes or [])
 
             merged_shapes = global_shapes + local_shapes
-
             slide_model.shapes = merged_shapes
+
             self.add_and_populate_slide(slide_model)
 
     # --------------------------
@@ -160,6 +154,7 @@ class PptxPresentationCreator:
                 elif isinstance(shape_model, PptxConnectorModel):
                     self.add_connector(slide, shape_model)
                 else:
+                    # Fallback simple text
                     self.add_textbox(
                         slide,
                         PptxTextBoxModel(
@@ -181,12 +176,12 @@ class PptxPresentationCreator:
         try:
             image = Image.open(path).convert("RGBA")
 
-            # Border radius (supports list or int)
+            # Border radius
             if model.border_radius:
                 radius = model.border_radius[0] if isinstance(model.border_radius, list) else model.border_radius
                 image = round_image_corners(image, radius)
 
-            # Object-fit
+            # Object fit
             if model.object_fit and model.object_fit.fit:
                 fit_mode = model.object_fit.fit.value
                 image = fit_image(image, model.position.width, model.position.height, fit_mode)
@@ -194,7 +189,7 @@ class PptxPresentationCreator:
             elif model.clip:
                 image = clip_image(image, model.position.width, model.position.height)
 
-            # Circle shape
+            # Circle
             if model.shape == PptxBoxShapeEnum.CIRCLE:
                 image = create_circle_image(image)
 
@@ -206,7 +201,7 @@ class PptxPresentationCreator:
             if model.opacity is not None:
                 image = set_image_opacity(image, model.opacity)
 
-            # Save transformed image
+            # Save processed image
             out = os.path.join(self._temp_dir, f"{uuid.uuid4()}.png")
             image.save(out)
             path = out
@@ -265,15 +260,13 @@ class PptxPresentationCreator:
             conn = slide.shapes.add_connector(model.type, *model.position.to_pt_xyxy())
             conn.line.width = Pt(model.thickness)
             conn.line.color.rgb = RGBColor.from_string(model.color)
-
-            # FIXED: Apply opacity on line fill
             self.set_fill_opacity(conn.line.fill, model.opacity)
 
         except Exception as e:
             print("⚠️ connector failed:", e)
 
     # --------------------------
-    # Paragraph Handler
+    # Paragraph Handling
     # --------------------------
     def add_paragraphs(self, tf: TextFrame, paragraphs: List[PptxParagraphModel]):
         for idx, p_model in enumerate(paragraphs):
@@ -307,11 +300,13 @@ class PptxPresentationCreator:
         except Exception as e:
             print("⚠️ populate paragraph failed:", e)
 
+    # --------------------------
+    # FIXED circular import function
+    # --------------------------
     def parse_html_text_to_text_runs(self, font, text):
-    # FIX: import here to avoid circular import
-    from services.html_to_text_runs_service import parse_html_text_to_text_runs
-    return parse_html_text_to_text_runs(text, font)
-
+        # FIX: dynamic import prevents circular dependency
+        from services.html_to_text_runs_service import parse_html_text_to_text_runs
+        return parse_html_text_to_text_runs(text, font)
 
     def populate_text_run(self, r: _Run, model: PptxTextRunModel):
         try:
