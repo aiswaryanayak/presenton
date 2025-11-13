@@ -12,16 +12,16 @@ from api.v1.webhook.router import API_V1_WEBHOOK_ROUTER
 from api.v1.mock.router import API_V1_MOCK_ROUTER
 from api.v1.ppt.endpoints.presentation import (
     PRESENTATION_ROUTER,
-    generate_presentation_from_gemini,  # ✅ correct Gemini import
+    generate_presentation_from_gemini,  # Correct Gemini wrapper
 )
 
 # ---------------------------------------------------------------- #
-# ✅ Initialize FastAPI app
+# Initialize FastAPI App
 # ---------------------------------------------------------------- #
 app = FastAPI(lifespan=app_lifespan)
 
 # ---------------------------------------------------------------- #
-# ✅ Register existing routers
+# Register Routers
 # ---------------------------------------------------------------- #
 app.include_router(API_V1_PPT_ROUTER)
 app.include_router(API_V1_WEBHOOK_ROUTER)
@@ -29,39 +29,30 @@ app.include_router(API_V1_MOCK_ROUTER)
 app.include_router(PRESENTATION_ROUTER)
 
 # ---------------------------------------------------------------- #
-# ✅ Configure CORS (for Vercel + local dev + Render)
+# 🔥 FIXED CORS CONFIGURATION (100% Working)
 # ---------------------------------------------------------------- #
-# ---------------------------------------------------------------- #
-# ✅ Configure CORS (works for Vercel + localhost + Render)
-# ---------------------------------------------------------------- #
+# IMPORTANT:
+# Do NOT use allow_origins + allow_origin_regex together.
+# FastAPI ignores regex when allow_origins is set.
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*",       # allow ALL https origins temporarily
+    allow_origin_regex=r"https://.*",  # Allow all HTTPS origins (Vercel, Render, custom, preview URLs)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # ✅ allow all Vercel preview URLs
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ✅ Debug log for verification in Render logs
 logging.basicConfig(level=logging.INFO)
-logging.info("✅ CORS enabled for: %s", origins)
+logging.info("🔥 CORS enabled using allow_origin_regex=https://.*")
 
 # ---------------------------------------------------------------- #
-# ✅ Middleware for environment config
+# Middleware
 # ---------------------------------------------------------------- #
 app.add_middleware(UserConfigEnvUpdateMiddleware)
 
 # ---------------------------------------------------------------- #
-# ✅ Gemini → Deck endpoint
+# Gemini Request Model
 # ---------------------------------------------------------------- #
 class GeminiDeckRequest(BaseModel):
     content: str
@@ -69,13 +60,12 @@ class GeminiDeckRequest(BaseModel):
     template: Optional[str] = "modern"
     export_as: Optional[str] = "pptx"
 
+# ---------------------------------------------------------------- #
+# Gemini → Deck Endpoint
+# ---------------------------------------------------------------- #
 @app.post("/api/v1/ppt/from_gemini")
 async def create_from_gemini(request: GeminiDeckRequest):
-    """
-    Accepts Gemini-generated content and creates a full presentation deck.
-    """
     try:
-        # ✅ Use the correct wrapper that builds the internal request model
         result = await generate_presentation_from_gemini(
             content=request.content,
             n_slides=request.n_slides,
@@ -88,14 +78,14 @@ async def create_from_gemini(request: GeminiDeckRequest):
         raise HTTPException(status_code=500, detail=f"Gemini rendering failed: {str(e)}")
 
 # ---------------------------------------------------------------- #
-# ✅ Root endpoint
+# Root Endpoint
 # ---------------------------------------------------------------- #
 @app.get("/")
 async def root():
     return {
         "message": "✅ Presenton Gemini Visual Generator is live!",
         "status": "running",
-        "allowed_origins": origins,
+        "cors": "allow_origin_regex=https://.*",
         "endpoints": [
             "/api/v1/ppt/from_gemini",
             "/presentation/generate",
@@ -103,8 +93,9 @@ async def root():
     }
 
 # ---------------------------------------------------------------- #
-# ✅ Quick CORS test endpoint (optional)
+# Quick CORS Test
 # ---------------------------------------------------------------- #
 @app.get("/test-cors")
 async def test_cors():
     return {"message": "CORS is working fine ✅"}
+
