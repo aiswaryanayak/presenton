@@ -1,12 +1,19 @@
-from typing import List, Optional, Literal
+from typing import List, Optional, Union
+from enum import Enum
 from pydantic import BaseModel
 
 
-# -----------------------------
-# Position & Spacing Models
-# -----------------------------
+# ----------------------------------------------------
+# GLOBAL MODEL CONFIG (needed for enums in Pydantic v2)
+# ----------------------------------------------------
+class PptxBaseModel(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
 
-class PptxPositionModel(BaseModel):
+
+# ----------------------------------------------------
+# Position & Spacing
+# ----------------------------------------------------
+class PptxPositionModel(PptxBaseModel):
     left: int
     top: int
     width: int
@@ -19,18 +26,17 @@ class PptxPositionModel(BaseModel):
         return [self.left, self.top, self.left + self.width, self.top + self.height]
 
 
-class PptxSpacingModel(BaseModel):
+class PptxSpacingModel(PptxBaseModel):
     top: int = 0
     bottom: int = 0
     left: int = 0
     right: int = 0
 
 
-# -----------------------------
-# Font & Text Models
-# -----------------------------
-
-class PptxFontModel(BaseModel):
+# ----------------------------------------------------
+# Font & Text
+# ----------------------------------------------------
+class PptxFontModel(PptxBaseModel):
     name: Optional[str] = None
     size: Optional[int] = None
     color: Optional[str] = None
@@ -41,36 +47,35 @@ class PptxFontModel(BaseModel):
     font_weight: Optional[int] = None
 
 
-class PptxTextRunModel(BaseModel):
+class PptxTextRunModel(PptxBaseModel):
     text: str
     font: Optional[PptxFontModel] = None
 
 
-class PptxParagraphModel(BaseModel):
+class PptxParagraphModel(PptxBaseModel):
     text: Optional[str] = None
     text_runs: Optional[List[PptxTextRunModel]] = None
     alignment: Optional[str] = None
-    spacing: Optional["PptxSpacingModel"] = None
+    spacing: Optional[PptxSpacingModel] = None
     font: Optional[PptxFontModel] = None
     line_height: Optional[float] = None
 
 
-# -----------------------------
-# Fill & Stroke Models
-# -----------------------------
-
-class PptxFillModel(BaseModel):
+# ----------------------------------------------------
+# Fill & Stroke
+# ----------------------------------------------------
+class PptxFillModel(PptxBaseModel):
     color: str = "#FFFFFF"
     opacity: float = 1.0
 
 
-class PptxStrokeModel(BaseModel):
+class PptxStrokeModel(PptxBaseModel):
     color: str = "#000000"
     thickness: int = 0
     opacity: float = 1.0
 
 
-class PptxShadowModel(BaseModel):
+class PptxShadowModel(PptxBaseModel):
     color: str = "000000"
     angle: float = 45
     offset: int = 5
@@ -78,36 +83,34 @@ class PptxShadowModel(BaseModel):
     opacity: float = 0.5
 
 
-# -----------------------------
-# Picture / Object Fit Models
-# -----------------------------
-
-class PptxObjectFitEnum(str):
+# ----------------------------------------------------
+# Picture / ObjectFit
+# ----------------------------------------------------
+class PptxObjectFitEnum(str, Enum):
     CONTAIN = "CONTAIN"
     COVER = "COVER"
     FILL = "FILL"
 
 
-class PptxObjectFitModel(BaseModel):
+class PptxObjectFitModel(PptxBaseModel):
     fit: Optional[PptxObjectFitEnum] = None
     focus: Optional[List[float]] = None  # [x, y]
 
 
-class PptxPictureModel(BaseModel):
+class PptxPictureModel(PptxBaseModel):
     path: Optional[str] = None
     is_network: bool = False
 
 
-# -----------------------------
+# ----------------------------------------------------
 # Shape Types
-# -----------------------------
-
-class PptxBoxShapeEnum(str):
+# ----------------------------------------------------
+class PptxBoxShapeEnum(str, Enum):
     RECTANGLE = "RECTANGLE"
     CIRCLE = "CIRCLE"
 
 
-class PptxAutoShapeBoxModel(BaseModel):
+class PptxAutoShapeBoxModel(PptxBaseModel):
     type: int = 1
     position: PptxPositionModel
     paragraphs: Optional[List[PptxParagraphModel]] = None
@@ -119,7 +122,7 @@ class PptxAutoShapeBoxModel(BaseModel):
     text_wrap: bool = True
 
 
-class PptxPictureBoxModel(BaseModel):
+class PptxPictureBoxModel(PptxBaseModel):
     picture: PptxPictureModel
     position: PptxPositionModel
     object_fit: Optional[PptxObjectFitModel] = None
@@ -131,7 +134,7 @@ class PptxPictureBoxModel(BaseModel):
     margin: Optional[PptxSpacingModel] = None
 
 
-class PptxTextBoxModel(BaseModel):
+class PptxTextBoxModel(PptxBaseModel):
     position: PptxPositionModel
     paragraphs: List[PptxParagraphModel]
     fill: Optional[PptxFillModel] = None
@@ -139,7 +142,7 @@ class PptxTextBoxModel(BaseModel):
     text_wrap: bool = True
 
 
-class PptxConnectorModel(BaseModel):
+class PptxConnectorModel(PptxBaseModel):
     type: int
     position: PptxPositionModel
     color: str = "000000"
@@ -147,28 +150,27 @@ class PptxConnectorModel(BaseModel):
     opacity: float = 1.0
 
 
-# -----------------------------
-# Slide + Presentation Models
-# -----------------------------
-
-class PptxSlideModel(BaseModel):
+# ----------------------------------------------------
+# Slide + Presentation
+# ----------------------------------------------------
+class PptxSlideModel(PptxBaseModel):
     shapes: Optional[List[
-        PptxAutoShapeBoxModel
-        | PptxPictureBoxModel
-        | PptxTextBoxModel
-        | PptxConnectorModel
+        Union[PptxAutoShapeBoxModel,
+              PptxPictureBoxModel,
+              PptxTextBoxModel,
+              PptxConnectorModel]
     ]] = None
 
     background: Optional[PptxFillModel] = None
     note: Optional[str] = None
 
 
-class PptxPresentationModel(BaseModel):
+class PptxPresentationModel(PptxBaseModel):
     slides: Optional[List[PptxSlideModel]] = None
     shapes: Optional[List[
-        PptxAutoShapeBoxModel
-        | PptxPictureBoxModel
-        | PptxTextBoxModel
-        | PptxConnectorModel
+        Union[PptxAutoShapeBoxModel,
+              PptxPictureBoxModel,
+              PptxTextBoxModel,
+              PptxConnectorModel]
     ]] = None
 
