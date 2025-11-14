@@ -5,11 +5,15 @@ import random
 import re
 import traceback
 import uuid
+import os
+import glob
+from pathlib import Path
 from datetime import datetime
 from typing import Any, List, Optional, Type
 
 import dirtyjson
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -30,7 +34,7 @@ from servers.fastapi.services.image_generation_service import ImageGenerationSer
 from servers.fastapi.services.pptx_presentation_creator import PptxPresentationCreator
 from servers.fastapi.models.sql.presentation import PresentationModel
 from servers.fastapi.utils.asset_directory_utils import get_images_directory
-from servers.fastapi.utils.export_utils import export_presentation
+from servers.fastapi.utils.export_utils import export_presentation, get_exports_directory
 from servers.fastapi.utils.llm_calls.generate_presentation_outlines import generate_ppt_outline
 from servers.fastapi.utils.llm_calls.generate_presentation_structure import generate_presentation_structure
 from servers.fastapi.utils.llm_calls.generate_slide_content import get_slide_content_from_type_and_outline
@@ -464,6 +468,39 @@ async def generate_presentation_sync(
 
 
 # -------------------------
+# Download endpoint
+# -------------------------
+@PRESENTATION_ROUTER.get("/download/{presentation_id}")
+async def download_presentation(presentation_id: uuid.UUID):
+    """
+    Return the generated PPTX file from exports directory.
+    The exporter currently writes files to the exports directory (see export_utils).
+    This endpoint searches for a matching .pptx file for the given presentation_id and returns it.
+    """
+    exports_dir = get_exports_directory()
+    # try exact matches first: files named <uuid>.pptx
+    id_str = str(presentation_id)
+    candidates = []
+
+    # exact filename
+    exact_path = Path(exports_dir) / f"{id_str}.pptx"
+    if exact_path.exists():
+        return FileResponse(str(exact_path), media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", filename=exact_path.name)
+
+    # search for any file that contains the id in the filename
+    pattern = str(Path(exports_dir) / f"*{id_str}*.pptx")
+    candidates = glob.glob(pattern)
+
+    if not candidates:
+        # fallback: return 404 with helpful message
+        raise HTTPException(status_code=404, detail=f"No exported PPTX found for presentation id={presentation_id} in {exports_dir}")
+
+    # pick the first candidate (should be deterministic enough)
+    file_path = candidates[0]
+    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", filename=Path(file_path).name)
+
+
+# -------------------------
 # Gemini Wrapper (always hybrid)
 # -------------------------
 async def generate_presentation_from_gemini(**kwargs):
@@ -489,4 +526,3 @@ async def generate_presentation_from_gemini(**kwargs):
 
 
 generate_presentation = generate_presentation_from_gemini
-
