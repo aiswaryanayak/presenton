@@ -13,7 +13,7 @@ from services.temp_file_service import TEMP_FILE_SERVICE
 from utils.asset_directory_utils import get_exports_directory
 from pathvalidate import sanitize_filename
 
-# Import DB session + presentation model
+# DB
 from servers.fastapi.services.database import get_async_session
 from servers.fastapi.models.sql.presentation import PresentationModel
 
@@ -24,81 +24,68 @@ async def export_presentation(
     export_as: Literal["pptx", "pdf"]
 ) -> PresentationAndPath:
     """
-    Export presentation WITHOUT calling the frontend.
-
-    Steps:
-      1. Load presentation from DB
-      2. Convert DB structure → PPTX model
-      3. Build PPT using PptxPresentationCreator
-      4. Save file to /tmp (Render-compatible)
+    EXPORTS PRESENTATION USING ONLY UUID AS FINAL FILE NAME.
+    This guarantees the download endpoint ALWAYS finds the file.
     """
 
-    # ---------------------------------------------
-    # 1️⃣ Load Presentation From Database
-    # ---------------------------------------------
+    # ---------------------------
+    # 1️⃣ Load DB Presentation
+    # ---------------------------
     async for session in get_async_session():
         db_presentation = await session.get(PresentationModel, presentation_id)
-
         if not db_presentation:
-            raise HTTPException(404, "Presentation not found in database")
+            raise HTTPException(404, "Presentation not found")
 
-    # ---------------------------------------------
-    # 2️⃣ Convert DB structure into PPTX JSON model
-    # ---------------------------------------------
+    # ---------------------------
+    # 2️⃣ Build PPTX Model
+    # ---------------------------
     try:
         pptx_json = {
             "slides": db_presentation.structure.get("slides", []),
             "theme": db_presentation.layout,
-            "title": db_presentation.title or "Untitled Presentation",
+            "title": db_presentation.title or "Untitled"
         }
-
         pptx_model = PptxPresentationModel.parse_obj(pptx_json)
 
     except Exception as e:
         raise HTTPException(
-            500,
-            f"❌ Failed to build PPTX model from presentation structure: {str(e)}"
+            500, f"Failed to prepare PPTX model: {str(e)}"
         )
 
-    # ---------------------------------------------
-    # 3️⃣ Create the PPT using the Creator
-    # ---------------------------------------------
+    # ---------------------------
+    # 3️⃣ Create PPT in Temp Dir
+    # ---------------------------
     temp_dir = TEMP_FILE_SERVICE.create_temp_dir()
     pptx_creator = PptxPresentationCreator(pptx_model, temp_dir)
 
     try:
         await pptx_creator.create_ppt()
-
     except Exception as e:
-        raise HTTPException(
-            500,
-            f"❌ PPTX creation logic failed during slide building: {str(e)}"
-        )
+        raise HTTPException(500, f"PPTX creation failed: {str(e)}")
 
-    # ---------------------------------------------
-    # 4️⃣ Save File to /tmp directory (Render-compatible)
-    # ---------------------------------------------
+    # ---------------------------
+    # 4️⃣ Save to Exports Directory
+    # FINAL FILE NAME → ALWAYS UUID
+    # ---------------------------
     try:
-        export_directory = "/tmp"   # <---- FIXED LOCATION
-        os.makedirs(export_directory, exist_ok=True)
+        export_dir = get_exports_directory()
+        os.makedirs(export_dir, exist_ok=True)
 
-        # ALWAYS save using presentation ID to match download route
-        file_name = f"{presentation_id}"
-        file_path = os.path.join(export_directory, f"{file_name}.pptx")
+        # FINAL FIX — ALWAYS SAVE USING UUID
+        final_filename = f"{presentation_id}.pptx"
+        final_path = os.path.join(export_dir, final_filename)
 
-        pptx_creator.save(file_path)
+        pptx_creator.save(final_path)
 
     except Exception as e:
         raise HTTPException(
-            500,
-            f"❌ Failed to save exported PPTX file to /tmp: {str(e)}"
+            500, f"Failed to save exported file: {str(e)}"
         )
 
-    # ---------------------------------------------
-    # 5️⃣ Return Result
-    # ---------------------------------------------
+    # ---------------------------
+    # 5️⃣ Return Path For Frontend
+    # ---------------------------
     return PresentationAndPath(
         presentation_id=presentation_id,
-        path=file_path
+        path=final_path
     )
-
