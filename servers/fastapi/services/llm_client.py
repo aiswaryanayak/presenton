@@ -20,7 +20,6 @@ except Exception:
     AsyncAnthropic = None
 
 # === Internal helpers ===
-from enums.llm_provider import LLMProvider
 from utils.get_env import (
     get_anthropic_api_key_env,
     get_google_api_key_env,
@@ -29,7 +28,7 @@ from utils.get_env import (
 
 
 # ===============================================================
-# UNIFIED LLM CLIENT — Using Gemini 2.0 Flash Preview (Correct)
+# UNIFIED LLM CLIENT — Gemini 2.0 Flash Preview
 # ===============================================================
 class LLMClient:
     def __init__(self):
@@ -37,29 +36,30 @@ class LLMClient:
         self.openai_api_key = get_openai_api_key_env()
         self.anthropic_api_key = get_anthropic_api_key_env()
 
-        # Configure Gemini once
         if genai and self.google_api_key:
             try:
                 genai.configure(api_key=self.google_api_key)
             except Exception as e:
                 print("⚠️ Gemini init warning:", e)
 
-        # THE FIX ➜ Use correct high-quota model
+        # Correct high quota model (NO preview-image-generation)
         self.gemini_model_name = os.getenv(
             "GEMINI_MODEL_NAME",
-            "models/gemini-2.0-flash-preview"
+            "models/gemini-2.0-flash-preview",
         )
 
     def enable_web_grounding(self) -> bool:
         return False
 
     def _normalize_provider(self, provider: Any) -> str:
-        if not provider: return "google"
-        if isinstance(provider, str): return provider.lower()
+        if not provider:
+            return "google"
+        if isinstance(provider, str):
+            return provider.lower()
         return str(provider).lower()
 
     # ===========================================================
-    # GENERATE — Gemini / OpenAI / Anthropic
+    # generate()
     # ===========================================================
     async def generate(
         self,
@@ -71,15 +71,14 @@ class LLMClient:
         provider = self._normalize_provider(provider)
 
         try:
-            # -------------------- GEMINI --------------------
+            # ----------- GEMINI --------------
             if provider.startswith("google"):
                 if not genai:
-                    raise RuntimeError("google-generativeai not installed.")
-
+                    raise RuntimeError("google-generativeai not installed")
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
 
-                if isinstance(prompt, (list, dict)):
+                if isinstance(prompt, (dict, list)):
                     import json
                     prompt = json.dumps(prompt, ensure_ascii=False)
 
@@ -89,7 +88,7 @@ class LLMClient:
                 )
                 return getattr(response, "text", str(response))
 
-            # -------------------- OPENAI --------------------
+            # ----------- OPENAI --------------
             elif provider.startswith("openai"):
                 client = AsyncOpenAI(api_key=self.openai_api_key)
                 resp = await client.chat.completions.create(
@@ -98,7 +97,7 @@ class LLMClient:
                 )
                 return resp.choices[0].message.content
 
-            # ------------------- ANTHROPIC ------------------
+            # ----------- ANTHROPIC -----------
             elif provider.startswith("anthropic"):
                 client = AsyncAnthropic(api_key=self.anthropic_api_key)
                 resp = await client.messages.create(
@@ -106,53 +105,36 @@ class LLMClient:
                     max_tokens=500,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                try:
-                    return resp.content[0].text
-                except:
-                    return str(resp)
+                return resp.content[0].text if resp.content else str(resp)
 
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
 
         except Exception as e:
-            print(f"❌ LLMClient.generate({provider}) failed:", e)
+            print(f"❌ generate() failed:", e)
             raise HTTPException(500, f"LLM API error: {e}")
 
     # ===========================================================
-    # COMPAT generate_text()
+    # generate_text() — wrapper
     # ===========================================================
-    async def generate_text(
-        self,
-        model: str,
-        messages: list,
-        provider: Optional[str] = "google",
-        **kwargs,
-    ):
+    async def generate_text(self, model, messages, provider="google", **kwargs):
         try:
-            prompt_parts = []
-
-            for m in messages:
-                if hasattr(m, "content"):
-                    prompt_parts.append(str(m.content))
-                elif isinstance(m, dict):
-                    prompt_parts.append(str(m.get("content", "")))
-                else:
-                    prompt_parts.append(str(m))
-
-            prompt = "\n".join(prompt_parts)
-
-            return await self.generate(
-                prompt=prompt,
-                provider=provider,
-                model=model,
+            prompt = "\n".join(
+                (
+                    m.content if hasattr(m, "content")
+                    else m.get("content") if isinstance(m, dict)
+                    else str(m)
+                )
+                for m in messages
             )
+            return await self.generate(prompt, model=model, provider=provider)
 
         except Exception as e:
-            print("⚠️ LLMClient.generate_text failed:", e)
-            raise HTTPException(500, f"LLMClient.generate_text failed: {e}")
+            print("⚠️ generate_text failed:", e)
+            raise HTTPException(500, f"generate_text failed: {e}")
 
     # ===========================================================
-    # Structured JSON Output
+    # generate_structured() — JSON output
     # ===========================================================
     async def generate_structured(
         self,
@@ -160,45 +142,41 @@ class LLMClient:
         messages: list,
         response_format: dict,
         strict: bool = True,
-        provider: Optional[str] = "google",
+        provider: Optional[str] = "google"
     ):
         provider = self._normalize_provider(provider)
 
         try:
-            # -------- GEMINI --------
+            # ----- Gemini -----
             if provider.startswith("google"):
                 model_name = model or self.gemini_model_name
                 gem_model = genai.GenerativeModel(model_name)
 
                 import json
-                prompt_parts = []
-                for m in messages:
-                    if hasattr(m, "content"):
-                        content = m.content
-                    else:
-                        content = m
-                    if isinstance(content, (dict, list)):
-                        prompt_parts.append(json.dumps(content, ensure_ascii=False))
-                    else:
-                        prompt_parts.append(str(content))
-
-                prompt_text = "\n".join(prompt_parts)
+                prompt = "\n".join(
+                    json.dumps(m.content if hasattr(m, "content") else m, ensure_ascii=False)
+                    if isinstance(m, (dict, list)) else str(m)
+                    for m in messages
+                )
 
                 response = await asyncio.to_thread(
                     gem_model.generate_content,
-                    f"{prompt_text}\n\nReturn JSON strictly matching:\n{json.dumps(response_format)}"
+                    f"{prompt}\n\nReturn JSON strictly matching:\n{json.dumps(response_format)}"
                 )
 
-                import re
+                text = response.text
                 try:
-                    return json.loads(response.text)
+                    return json.loads(text)
                 except:
-                    match = re.search(r"\{.*\}", response.text, re.DOTALL)
-                    if match: return json.loads(match.group(0))
-                    if strict: raise ValueError("Invalid JSON")
-                    return {"raw": response.text}
+                    import re
+                    m = re.search(r"\{.*\}", text, re.DOTALL)
+                    if m:
+                        return json.loads(m.group(0))
+                    if strict:
+                        raise ValueError("Invalid JSON")
+                    return {"raw": text}
 
-            # -------- OPENAI --------
+            # ----- OpenAI -----
             elif provider.startswith("openai"):
                 client = AsyncOpenAI(api_key=self.openai_api_key)
                 resp = await client.chat.completions.create(
@@ -209,7 +187,7 @@ class LLMClient:
                 import json
                 return json.loads(resp.choices[0].message.content)
 
-            # ------- ANTHROPIC -------
+            # ----- Anthropic -----
             elif provider.startswith("anthropic"):
                 client = AsyncAnthropic(api_key=self.anthropic_api_key)
                 resp = await client.messages.create(
@@ -218,16 +196,37 @@ class LLMClient:
                     messages=[{"role": "user", "content": str(messages)}],
                 )
                 import json
-                try:
-                    return json.loads(resp.content[0].text)
-                except:
-                    if strict: raise
-                    return {"raw": resp.content[0].text}
-
-            else:
-                raise ValueError(f"Unsupported provider: {provider}")
+                return json.loads(resp.content[0].text)
 
         except Exception as e:
-            print("❌ LLMClient.generate_structured failed:", e)
+            print("❌ generate_structured failed:", e)
             raise HTTPException(500, f"generate_structured failed: {e}")
+
+    # ===========================================================
+    # stream_structured() — REQUIRED BY outline generator
+    # ===========================================================
+    async def stream_structured(self, *args, **kwargs):
+        """
+        Presenton expects this to behave like:
+        async for chunk in client.stream_structured(...)
+
+        Your code only needs SINGLE response (not streaming),
+        so we just wrap generate_structured.
+        """
+        model = kwargs.get("model")
+        messages = kwargs.get("messages")
+        response_format = kwargs.get("schema") or kwargs.get("response_format")
+        provider = kwargs.get("provider", "google")
+        strict = kwargs.get("strict", True)
+
+        # Yield once — simulated streaming
+        result = await self.generate_structured(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            provider=provider,
+            strict=strict,
+        )
+
+        yield result
 
