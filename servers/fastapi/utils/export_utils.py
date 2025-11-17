@@ -24,14 +24,13 @@ async def export_presentation(
     export_as: Literal["pptx", "pdf"]
 ) -> PresentationAndPath:
     """
-    FULLY FIXED:
     Export presentation WITHOUT calling the frontend.
 
     Steps:
-      1. Load presentation (structure, layout) from backend DB
-      2. Convert DB structure → PptxPresentationModel JSON
-      3. Use PptxPresentationCreator to generate PPTX
-      4. Save export file to /exports directory
+      1. Load presentation from DB
+      2. Convert DB structure → PPTX model
+      3. Build PPT using PptxPresentationCreator
+      4. Save file to /tmp (Render-compatible)
     """
 
     # ---------------------------------------------
@@ -53,7 +52,6 @@ async def export_presentation(
             "title": db_presentation.title or "Untitled Presentation",
         }
 
-        # Parse into Pydantic model
         pptx_model = PptxPresentationModel.parse_obj(pptx_json)
 
     except Exception as e:
@@ -78,13 +76,14 @@ async def export_presentation(
         )
 
     # ---------------------------------------------
-    # 4️⃣ Save File to Exports Directory
+    # 4️⃣ Save File to /tmp directory (Render-compatible)
     # ---------------------------------------------
     try:
-        export_directory = get_exports_directory()
+        export_directory = "/tmp"   # <---- FIXED LOCATION
         os.makedirs(export_directory, exist_ok=True)
 
-        file_name = sanitize_filename(title or str(presentation_id))
+        # ALWAYS save using presentation ID to match download route
+        file_name = f"{presentation_id}"
         file_path = os.path.join(export_directory, f"{file_name}.pptx")
 
         pptx_creator.save(file_path)
@@ -92,7 +91,7 @@ async def export_presentation(
     except Exception as e:
         raise HTTPException(
             500,
-            f"❌ Failed to save exported PPTX file: {str(e)}"
+            f"❌ Failed to save exported PPTX file to /tmp: {str(e)}"
         )
 
     # ---------------------------------------------
