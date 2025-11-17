@@ -264,7 +264,7 @@ async def generate_presentation_handler(
                     outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
 
             if not isinstance(outlines_json, dict) or "slides" not in outlines_json:
-                outlines_json = {"slides": _heur istic_create_slides_from_text(text_data, n_slides)}
+                outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
 
             outlines_json = await _normalize_outlines_slides(outlines_json, n_slides)
             presentation_outlines = PresentationOutlineModel(**outlines_json)
