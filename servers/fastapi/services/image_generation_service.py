@@ -16,11 +16,9 @@ from utils.image_provider import (
     is_dalle3_selected,
 )
 
-
-# -----------------------------
-# Google Config (important!)
-# -----------------------------
-# Must configure once, the API key is auto loaded from env
+# ----------------------------------------
+# Google Config
+# ----------------------------------------
 try:
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 except Exception as e:
@@ -33,14 +31,16 @@ class ImageGenerationService:
         self.output_directory = output_directory
         self.image_gen_func = self.get_image_gen_func()
 
+    # ------------------------------------------------------------
+    # Select Provider
+    # ------------------------------------------------------------
     def get_image_gen_func(self):
-        """Decides which image provider to use."""
         if is_pixabay_selected():
             return self.get_image_from_pixabay
         elif is_pixels_selected():
             return self.get_image_from_pexels
         elif is_gemini_flash_selected():
-            return self.generate_image_google  # <-- our fixed function
+            return self.generate_image_google
         elif is_dalle3_selected():
             return self.generate_image_openai
         return None
@@ -48,15 +48,14 @@ class ImageGenerationService:
     def is_stock_provider_selected(self):
         return is_pixels_selected() or is_pixabay_selected()
 
-    # =====================================================================
-    # Main entry point → Generates image + handles storage & fallbacks
-    # =====================================================================
+    # ------------------------------------------------------------
+    # Main Entry Point
+    # ------------------------------------------------------------
     async def generate_image(self, prompt: ImagePrompt) -> str | ImageAsset:
         if not self.image_gen_func:
-            print("⚠️ No image provider selected → using placeholder.")
+            print("⚠️ No image provider selected → placeholder used")
             return "/static/images/placeholder.jpg"
 
-        # AI providers get the themed prompt
         themed_prompt = prompt.get_image_prompt(
             with_theme=not self.is_stock_provider_selected()
         )
@@ -66,16 +65,17 @@ class ImageGenerationService:
             if self.is_stock_provider_selected():
                 image_path = await self.image_gen_func(themed_prompt)
             else:
-                image_path = await self.image_gen_func(themed_prompt, self.output_directory)
+                image_path = await self.image_gen_func(
+                    themed_prompt,
+                    self.output_directory
+                )
 
             if not image_path:
                 return "/static/images/placeholder.jpg"
 
-            # If it's a URL → return URL directly
             if isinstance(image_path, str) and image_path.startswith("http"):
                 return image_path
 
-            # If local file exists → wrap in ImageAsset
             if os.path.exists(image_path):
                 return ImageAsset(
                     path=image_path,
@@ -92,9 +92,9 @@ class ImageGenerationService:
             print("❌ Image generation error:", e)
             return "/static/images/placeholder.jpg"
 
-    # =====================================================================
-    # DALL-E 3
-    # =====================================================================
+    # ------------------------------------------------------------
+    # DALL·E 3
+    # ------------------------------------------------------------
     async def generate_image_openai(self, prompt: str, output_directory: str) -> str:
         client = AsyncOpenAI()
         result = await client.images.generate(
@@ -106,28 +106,31 @@ class ImageGenerationService:
         image_url = result.data[0].url
         return await download_file(image_url, output_directory)
 
-    # =====================================================================
-    # GEMINI IMAGE GENERATION (FIXED)
-    # =====================================================================
+    # ------------------------------------------------------------
+    # GEMINI IMAGE GENERATION (UPDATED)
+    # ------------------------------------------------------------
     async def generate_image_google(self, prompt: str, output_directory: str) -> str:
         """
-        Uses the ONLY correct Gemini image model:
-        gemini-2.0-flash-preview-image-generation
+        Uses the official Gemini image model:
+        models/gemini-2.0-flash-image-preview
         """
-        model_name = "gemini-2.0-flash-preview-image-generation"
+        model_name = "models/gemini-2.0-flash-image-preview"
         model = genai.GenerativeModel(model_name)
 
-        response = await asyncio.to_thread(
-            model.generate_content,
-            prompt,
-            generation_config={"response_mime_type": "image/jpeg"},
-        )
+        try:
+            response = await asyncio.to_thread(
+                model.generate_content,
+                prompt,
+                generation_config={"response_mime_type": "image/jpeg"},
+            )
+        except Exception as e:
+            print("❌ Gemini image generation failed:", e)
+            return "/static/images/placeholder.jpg"
 
-        image_path = None
         try:
             parts = response.candidates[0].content.parts
         except Exception:
-            print("❌ Gemini image response malformed")
+            print("❌ Gemini returned malformed image response")
             return "/static/images/placeholder.jpg"
 
         for part in parts:
@@ -135,12 +138,13 @@ class ImageGenerationService:
                 image_path = os.path.join(output_directory, f"{uuid.uuid4()}.jpg")
                 with open(image_path, "wb") as f:
                     f.write(part.inline_data.data)
+                return image_path
 
-        return image_path or "/static/images/placeholder.jpg"
+        return "/static/images/placeholder.jpg"
 
-    # =====================================================================
+    # ------------------------------------------------------------
     # Pexels
-    # =====================================================================
+    # ------------------------------------------------------------
     async def get_image_from_pexels(self, prompt: str) -> str:
         async with aiohttp.ClientSession(trust_env=True) as session:
             response = await session.get(
@@ -150,9 +154,9 @@ class ImageGenerationService:
             data = await response.json()
             return data["photos"][0]["src"]["large"]
 
-    # =====================================================================
+    # ------------------------------------------------------------
     # Pixabay
-    # =====================================================================
+    # ------------------------------------------------------------
     async def get_image_from_pixabay(self, prompt: str) -> str:
         async with aiohttp.ClientSession(trust_env=True) as session:
             response = await session.get(
