@@ -34,7 +34,7 @@ from servers.fastapi.services.image_generation_service import ImageGenerationSer
 from servers.fastapi.services.pptx_presentation_creator import PptxPresentationCreator
 from servers.fastapi.models.sql.presentation import PresentationModel
 from servers.fastapi.utils.asset_directory_utils import get_images_directory
-from servers.fastapi.utils.export_utils import export_presentation, get_exports_directory
+from servers.fastapi.utils.export_utils import export_presentation
 from servers.fastapi.utils.llm_calls.generate_presentation_outlines import generate_ppt_outline
 from servers.fastapi.utils.llm_calls.generate_presentation_structure import generate_presentation_structure
 from servers.fastapi.utils.llm_calls.generate_slide_content import get_slide_content_from_type_and_outline
@@ -132,128 +132,6 @@ async def get_all_presentations(sql_session: AsyncSession = Depends(get_async_se
 # -------------------------
 # Generation Handler
 # -------------------------
-async def _normalize_outlines_slides(outlines_json: dict, n_slides: int) -> dict:
-    """Ensure outlines_json has slides with string content. Coerce lists/dicts into readable strings."""
-    slides = outlines_json.get("slides") or []
-    normalized = []
-    for s in slides[:n_slides]:
-        # s might be a string, dict, or object with content
-        content = None
-        if isinstance(s, str):
-            content = s
-        elif isinstance(s, dict):
-            # Common patterns: {"content": "..."} or {"text": "..."} or {"content": [..]}
-            if "content" in s:
-                c = s["content"]
-                if isinstance(c, str):
-                    content = c
-                elif isinstance(c, list):
-                    # join list items
-                    content = "\n".join([ (item.get("text") if isinstance(item, dict) else str(item)) for item in c ])
-                else:
-                    content = str(c)
-            elif "text" in s:
-                content = s.get("text")
-            else:
-                # Fallback: join values
-                vals = []
-                for v in s.values():
-                    if isinstance(v, (str, int, float)):
-                        vals.append(str(v))
-                    elif isinstance(v, list):
-                        vals.extend([str(x) for x in v])
-                    elif isinstance(v, dict):
-                        vals.append(json.dumps(v, ensure_ascii=False))
-                content = " ".join(vals) if vals else json.dumps(s, ensure_ascii=False)
-        elif isinstance(s, list):
-            content = "\n".join([ (item.get("text") if isinstance(item, dict) else str(item)) for item in s ])
-        else:
-            content = str(s)
-
-        if content is None:
-            content = ""
-
-        normalized.append({"content": content})
-
-    # pad if less than n_slides
-    while len(normalized) < n_slides:
-        normalized.append({"content": ""})
-
-    return {"slides": normalized}
-
-
-def _validate_and_coerce_structure_for_export(structure: dict) -> dict:
-    """
-    Ensure `structure` is a dict with a `slides` list and each slide has the expected types:
-      - title: str
-      - layout_id: int
-      - bullets: list[str]
-      - visuals: list[str]
-      - chart_type: Optional[str]
-      - summary: Optional[str]
-    This function coerces types where possible (e.g., bullets string -> [string]).
-    """
-    if not isinstance(structure, dict):
-        raise ValueError("presentation.structure must be a dict")
-
-    slides = structure.get("slides")
-    if slides is None or not isinstance(slides, list):
-        raise ValueError("presentation.structure must contain a 'slides' list")
-
-    normalized = []
-    for i, s in enumerate(slides):
-        if not isinstance(s, dict):
-            # try to coerce simple forms
-            if isinstance(s, str):
-                sdict = {"title": s, "layout_id": i + 1, "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
-            elif isinstance(s, int):
-                sdict = {"title": f"Slide {i+1}", "layout_id": int(s), "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
-            else:
-                sdict = {"title": f"Slide {i+1}", "layout_id": i + 1, "bullets": [], "visuals": [], "chart_type": None, "summary": ""}
-        else:
-            sdict = dict(s)  # shallow copy
-
-        # Title
-        sdict["title"] = str(sdict.get("title", f"Slide {i+1}") or f"Slide {i+1}")
-
-        # layout_id -> int
-        try:
-            sdict["layout_id"] = int(sdict.get("layout_id", i + 1) or (i + 1))
-        except Exception:
-            sdict["layout_id"] = i + 1
-
-        # bullets -> list[str]
-        bullets = sdict.get("bullets", [])
-        if isinstance(bullets, str):
-            bullets = [bullets]
-        elif bullets is None:
-            bullets = []
-        elif not isinstance(bullets, list):
-            bullets = [str(bullets)]
-        # ensure all bullets are strings
-        bullets = [str(x) for x in bullets]
-        sdict["bullets"] = bullets
-
-        # visuals -> list[str]
-        visuals = sdict.get("visuals", [])
-        if isinstance(visuals, str):
-            visuals = [visuals]
-        elif visuals is None:
-            visuals = []
-        elif not isinstance(visuals, list):
-            visuals = [str(visuals)]
-        visuals = [str(x) for x in visuals]
-        sdict["visuals"] = visuals
-
-        # chart_type & summary
-        sdict["chart_type"] = None if sdict.get("chart_type") is None else str(sdict.get("chart_type"))
-        sdict["summary"] = "" if sdict.get("summary") is None else str(sdict.get("summary"))
-
-        normalized.append(sdict)
-
-    return {"slides": normalized}
-
-
 async def generate_presentation_handler(
     request: GeneratePresentationRequest,
     presentation_id: uuid.UUID,
@@ -269,7 +147,6 @@ async def generate_presentation_handler(
             n_slides = request.n_slides or 10
             text_data = ""
 
-            # generate_ppt_outline yields chunks (str/dict). Collect safely.
             async for chunk in generate_ppt_outline(
                 request.content,
                 n_slides,
@@ -281,7 +158,6 @@ async def generate_presentation_handler(
                 request.include_title_slide,
                 request.web_search,
             ):
-                # normalize chunk into string
                 if isinstance(chunk, (dict, list)):
                     try:
                         text_data += json.dumps(chunk, ensure_ascii=False)
@@ -290,7 +166,6 @@ async def generate_presentation_handler(
                 else:
                     text_data += str(chunk)
 
-            # try JSON parse, fallback to dirtyjson then heuristic
             outlines_json = None
             try:
                 outlines_json = json.loads(text_data)
@@ -300,7 +175,6 @@ async def generate_presentation_handler(
                 except Exception:
                     outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
 
-            # Ensure slides are normalized to string content
             if not isinstance(outlines_json, dict) or "slides" not in outlines_json:
                 outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
 
@@ -313,12 +187,9 @@ async def generate_presentation_handler(
             )
             total_slides = len(request.slides_markdown)
 
-        # 2️⃣ Load Hybrid Layout
         layout_model = PresentationLayoutModel()
 
-        # Ensure layout_model provides a to_string() used by LLM prompts.
         if not hasattr(layout_model, "to_string"):
-            # create a simple serializer that LLM prompt builders can use
             def _layout_to_string():
                 try:
                     if hasattr(layout_model, "model_dump"):
@@ -326,7 +197,6 @@ async def generate_presentation_handler(
                     return json.dumps(layout_model.__dict__, ensure_ascii=False)
                 except Exception:
                     return str(getattr(layout_model, "__dict__", str(layout_model)))
-
             setattr(layout_model, "to_string", _layout_to_string)
 
         presentation_structure = await generate_presentation_structure(
@@ -335,7 +205,6 @@ async def generate_presentation_handler(
             instructions=request.instructions,
         )
 
-        # 3️⃣ Create Presentation DB model
         presentation = PresentationModel(
             id=presentation_id,
             content=request.content,
@@ -353,18 +222,14 @@ async def generate_presentation_handler(
         image_service = ImageGenerationService(get_images_directory())
         slides, tasks = [], []
 
-        # Iterate slides according to total_slides but also use the layout list
         for i in range(total_slides):
-            # pick layout by index if available else fallback to first layout
             try:
                 layout = layout_model.slides[i]
             except Exception:
                 layout = layout_model.slides[0] if getattr(layout_model, "slides", None) else None
 
-            # slide_outline_text should always be a string now
             slide_outline_text = presentation_outlines.slides[i].content if i < len(presentation_outlines.slides) else ""
 
-            # Call slide content generator with correct argument order (outline, type, layout, style)
             try:
                 slide_type = getattr(layout, "type", "default")
                 style = request.template or "hybrid-modern"
@@ -375,7 +240,6 @@ async def generate_presentation_handler(
                     style,
                 )
             except TypeError:
-                # Older/newer signatures: try passing as keywords
                 content = await get_slide_content_from_type_and_outline(
                     slide_outline=slide_outline_text,
                     slide_type=slide_type,
@@ -383,7 +247,6 @@ async def generate_presentation_handler(
                     style=style,
                 )
 
-            # content may be a dict (structured) or a string. Normalize to dict for DB.
             if isinstance(content, str):
                 content_dict = {"__text__": content}
                 speaker_note = None
@@ -412,25 +275,20 @@ async def generate_presentation_handler(
         sql_session.add_all(generated_assets)
         await sql_session.commit()
 
-        # --- DEBUG: print structure before export (very important) ---
         try:
             debug_structure = presentation.structure if hasattr(presentation, "structure") else {}
         except Exception:
             debug_structure = {}
         print("🧩 DEBUG Presentation Structure (pre-export):", json.dumps(debug_structure, ensure_ascii=False) if isinstance(debug_structure, (dict, list)) else str(debug_structure))
 
-        # Validate / coerce structure for export so PPTX exporter won't fail on minor type issues.
         try:
             coerced_structure = _validate_and_coerce_structure_for_export(presentation.structure if isinstance(presentation.structure, dict) else (presentation.structure.model_dump() if hasattr(presentation.structure, "model_dump") else presentation.structure))
         except Exception as ex:
-            # If we cannot coerce, fail with a clear message
             print("🔥 ERROR: structure validation/coercion failed:", repr(ex))
             raise HTTPException(status_code=500, detail=f"Presentation structure invalid for export: {str(ex)}")
 
-        # assign back coerced structure for exporter and DB consistency
         presentation.structure = coerced_structure
 
-        # Export — catch exporter errors and return clearer message
         try:
             presentation_path = await export_presentation(
                 presentation_id,
@@ -448,7 +306,6 @@ async def generate_presentation_handler(
         )
 
     except HTTPException:
-        # re-raise already formatted HTTP errors
         raise
     except Exception as e:
         print("🔥 DEBUG: Presentation generation failed:", repr(e))
@@ -468,36 +325,26 @@ async def generate_presentation_sync(
 
 
 # -------------------------
-# Download endpoint
+# Download endpoint (FIXED FOR RENDER)
 # -------------------------
 @PRESENTATION_ROUTER.get("/download/{presentation_id}")
 async def download_presentation(presentation_id: uuid.UUID):
     """
-    Return the generated PPTX file from exports directory.
-    The exporter currently writes files to the exports directory (see export_utils).
-    This endpoint searches for a matching .pptx file for the given presentation_id and returns it.
+    FIXED: Always load PPTX from /tmp because Render only supports this folder for writable storage.
     """
-    exports_dir = get_exports_directory()
-    # try exact matches first: files named <uuid>.pptx
-    id_str = str(presentation_id)
-    candidates = []
+    file_path = f"/tmp/{presentation_id}.pptx"
 
-    # exact filename
-    exact_path = Path(exports_dir) / f"{id_str}.pptx"
-    if exact_path.exists():
-        return FileResponse(str(exact_path), media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", filename=exact_path.name)
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No exported PPTX found for presentation {presentation_id} in /tmp"
+        )
 
-    # search for any file that contains the id in the filename
-    pattern = str(Path(exports_dir) / f"*{id_str}*.pptx")
-    candidates = glob.glob(pattern)
-
-    if not candidates:
-        # fallback: return 404 with helpful message
-        raise HTTPException(status_code=404, detail=f"No exported PPTX found for presentation id={presentation_id} in {exports_dir}")
-
-    # pick the first candidate (should be deterministic enough)
-    file_path = candidates[0]
-    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation", filename=Path(file_path).name)
+    return FileResponse(
+        file_path,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        filename=f"{presentation_id}.pptx"
+    )
 
 
 # -------------------------
@@ -512,7 +359,7 @@ async def generate_presentation_from_gemini(**kwargs):
         n_slides=kwargs.get("n_slides", 10),
         export_as=kwargs.get("export_as", "pptx"),
         language=kwargs.get("language", "English"),
-        template="hybrid",  # ✅ always hybrid
+        template="hybrid",
         tone=tone_enum,
         verbosity=verbosity_enum,
         instructions=kwargs.get("instructions", ""),
@@ -526,3 +373,4 @@ async def generate_presentation_from_gemini(**kwargs):
 
 
 generate_presentation = generate_presentation_from_gemini
+
