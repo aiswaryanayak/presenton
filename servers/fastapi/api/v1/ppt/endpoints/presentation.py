@@ -41,7 +41,7 @@ from servers.fastapi.utils.llm_calls.generate_slide_content import get_slide_con
 from servers.fastapi.utils.ppt_utils import get_presentation_title_from_outlines
 from servers.fastapi.utils.process_slides import process_slide_and_fetch_assets
 
-# ✅ Force use of Hybrid layout
+# force hybrid layout
 from servers.fastapi.models.presentation_layout.hybrid_presenton_layout import (
     HybridPresentonLayout as PresentationLayoutModel,
 )
@@ -53,7 +53,6 @@ PRESENTATION_ROUTER = APIRouter(prefix="/presentation", tags=["Presentation"])
 # Helpers
 # -------------------------
 def coerce_enum(enum_cls: Type[Any], value: Any, default: Any):
-    """Safely coerce a value to an enum."""
     if value is None:
         return default
     if isinstance(value, enum_cls):
@@ -71,7 +70,6 @@ def coerce_enum(enum_cls: Type[Any], value: Any, default: Any):
 
 
 def _heuristic_create_slides_from_text(raw_text: str, n_slides_target: int) -> List[dict]:
-    """Fallback heuristic: create slides from text if parsing fails."""
     t = (raw_text or "").strip()
     t = re.sub(r"```(?:json)?", "", t)
     segments = [s.strip() for s in re.split(r"\n-{3,}\n|\n{2,}", t) if s.strip()]
@@ -113,24 +111,116 @@ def _heuristic_create_slides_from_text(raw_text: str, n_slides_target: int) -> L
 
 
 # -------------------------
-# CRUD
+# MISSING FUNCTION (RESTORED)
 # -------------------------
-@PRESENTATION_ROUTER.get("/all", response_model=List[PresentationWithSlides])
-async def get_all_presentations(sql_session: AsyncSession = Depends(get_async_session)):
-    results = await sql_session.execute(
-        select(PresentationModel, SlideModel)
-        .join(SlideModel, (SlideModel.presentation == PresentationModel.id) & (SlideModel.index == 0))
-        .order_by(PresentationModel.created_at.desc())
-    )
-    rows = results.all()
-    return [
-        PresentationWithSlides(**presentation.model_dump(), slides=[slide])
-        for presentation, slide in rows
-    ]
+async def _normalize_outlines_slides(outlines_json: dict, n_slides: int) -> dict:
+    slides = outlines_json.get("slides") or []
+    normalized = []
+    for s in slides[:n_slides]:
+        content = None
+        if isinstance(s, str):
+            content = s
+        elif isinstance(s, dict):
+            if "content" in s:
+                c = s["content"]
+                if isinstance(c, str):
+                    content = c
+                elif isinstance(c, list):
+                    content = "\n".join(
+                        [(item.get("text") if isinstance(item, dict) else str(item)) for item in c]
+                    )
+                else:
+                    content = str(c)
+            elif "text" in s:
+                content = s["text"]
+            else:
+                vals = []
+                for v in s.values():
+                    if isinstance(v, (str, int, float)):
+                        vals.append(str(v))
+                    elif isinstance(v, list):
+                        vals.extend([str(x) for x in v])
+                    elif isinstance(v, dict):
+                        vals.append(json.dumps(v, ensure_ascii=False))
+                content = " ".join(vals) if vals else json.dumps(s, ensure_ascii=False)
+        elif isinstance(s, list):
+            content = "\n".join(
+                [(item.get("text") if isinstance(item, dict) else str(item)) for item in s]
+            )
+        else:
+            content = str(s)
+
+        normalized.append({"content": content or ""})
+
+    while len(normalized) < n_slides:
+        normalized.append({"content": ""})
+
+    return {"slides": normalized}
 
 
 # -------------------------
-# Generation Handler
+# Structure validator (unchanged)
+# -------------------------
+def _validate_and_coerce_structure_for_export(structure: dict) -> dict:
+    if not isinstance(structure, dict):
+        raise ValueError("presentation.structure must be a dict")
+
+    slides = structure.get("slides")
+    if slides is None or not isinstance(slides, list):
+        raise ValueError("presentation.structure must contain a 'slides' list")
+
+    normalized = []
+    for i, s in enumerate(slides):
+        if not isinstance(s, dict):
+            if isinstance(s, str):
+                sdict = {"title": s, "layout_id": i + 1, "bullets": [],
+                         "visuals": [], "chart_type": None, "summary": ""}
+            elif isinstance(s, int):
+                sdict = {"title": f"Slide {i+1}", "layout_id": int(s), "bullets": [],
+                         "visuals": [], "chart_type": None, "summary": ""}
+            else:
+                sdict = {"title": f"Slide {i+1}", "layout_id": i + 1, "bullets": [],
+                         "visuals": [], "chart_type": None, "summary": ""}
+        else:
+            sdict = dict(s)
+
+        sdict["title"] = str(sdict.get("title", f"Slide {i+1}") or f"Slide {i+1}")
+
+        try:
+            sdict["layout_id"] = int(sdict.get("layout_id", i + 1) or (i + 1))
+        except Exception:
+            sdict["layout_id"] = i + 1
+
+        bullets = sdict.get("bullets", [])
+        if isinstance(bullets, str):
+            bullets = [bullets]
+        elif bullets is None:
+            bullets = []
+        elif not isinstance(bullets, list):
+            bullets = [str(bullets)]
+        bullets = [str(x) for x in bullets]
+        sdict["bullets"] = bullets
+
+        visuals = sdict.get("visuals", [])
+        if isinstance(visuals, str):
+            visuals = [visuals]
+        elif visuals is None:
+            visuals = []
+        elif not isinstance(visuals, list):
+            visuals = [str(visuals)]
+        visuals = [str(x) for x in visuals]
+        sdict["visuals"] = visuals
+
+        sdict["chart_type"] = None if sdict.get("chart_type") is None else str(sdict.get("chart_type"))
+        sdict["summary"] = "" if sdict.get("summary") is None else str(sdict.get("summary"))
+
+        normalized.append(sdict)
+
+    return {"slides": normalized}
+
+
+# -------------------------
+# MAIN GENERATION HANDLER
 # -------------------------
 async def generate_presentation_handler(
     request: GeneratePresentationRequest,
@@ -142,7 +232,6 @@ async def generate_presentation_handler(
         if using_slides_markdown:
             request.n_slides = len(request.slides_markdown)
 
-        # 1️⃣ Generate outlines
         if not using_slides_markdown:
             n_slides = request.n_slides or 10
             text_data = ""
@@ -166,7 +255,6 @@ async def generate_presentation_handler(
                 else:
                     text_data += str(chunk)
 
-            outlines_json = None
             try:
                 outlines_json = json.loads(text_data)
             except Exception:
@@ -176,7 +264,7 @@ async def generate_presentation_handler(
                     outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
 
             if not isinstance(outlines_json, dict) or "slides" not in outlines_json:
-                outlines_json = {"slides": _heuristic_create_slides_from_text(text_data, n_slides)}
+                outlines_json = {"slides": _heur istic_create_slides_from_text(text_data, n_slides)}
 
             outlines_json = await _normalize_outlines_slides(outlines_json, n_slides)
             presentation_outlines = PresentationOutlineModel(**outlines_json)
@@ -252,7 +340,7 @@ async def generate_presentation_handler(
                 speaker_note = None
             elif isinstance(content, dict):
                 content_dict = content
-                speaker_note = content.get("__speaker_note__") if isinstance(content, dict) else None
+                speaker_note = content.get("__speaker_note__")
             else:
                 content_dict = {"__raw__": str(content)}
                 speaker_note = None
@@ -276,16 +364,18 @@ async def generate_presentation_handler(
         await sql_session.commit()
 
         try:
-            debug_structure = presentation.structure if hasattr(presentation, "structure") else {}
+            debug_structure = presentation.structure
         except Exception:
             debug_structure = {}
-        print("🧩 DEBUG Presentation Structure (pre-export):", json.dumps(debug_structure, ensure_ascii=False) if isinstance(debug_structure, (dict, list)) else str(debug_structure))
+        print("🧩 DEBUG Presentation Structure:", json.dumps(debug_structure, ensure_ascii=False))
 
         try:
-            coerced_structure = _validate_and_coerce_structure_for_export(presentation.structure if isinstance(presentation.structure, dict) else (presentation.structure.model_dump() if hasattr(presentation.structure, "model_dump") else presentation.structure))
+            coerced_structure = _validate_and_coerce_structure_for_export(
+                presentation.structure
+            )
         except Exception as ex:
-            print("🔥 ERROR: structure validation/coercion failed:", repr(ex))
-            raise HTTPException(status_code=500, detail=f"Presentation structure invalid for export: {str(ex)}")
+            print("🔥 ERROR: structure validation failed:", repr(ex))
+            raise HTTPException(status_code=500, detail=f"Presentation structure invalid: {str(ex)}")
 
         presentation.structure = coerced_structure
 
@@ -298,7 +388,7 @@ async def generate_presentation_handler(
         except Exception as ex:
             print("🔥 ERROR: export_presentation failed:", repr(ex))
             traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"Failed to convert presentation to {request.export_as} model: {str(ex)}")
+            raise HTTPException(status_code=500, detail=f"failed to convert to pptx: {str(ex)}")
 
         return PresentationPathAndEditPath(
             **presentation_path.model_dump(),
@@ -314,7 +404,7 @@ async def generate_presentation_handler(
 
 
 # -------------------------
-# Public Endpoint
+# Public sync endpoint
 # -------------------------
 @PRESENTATION_ROUTER.post("/generate", response_model=PresentationPathAndEditPath)
 async def generate_presentation_sync(
@@ -325,19 +415,19 @@ async def generate_presentation_sync(
 
 
 # -------------------------
-# Download endpoint (FIXED FOR RENDER)
+# FIXED DOWNLOAD ENDPOINT
 # -------------------------
 @PRESENTATION_ROUTER.get("/download/{presentation_id}")
 async def download_presentation(presentation_id: uuid.UUID):
     """
-    FIXED: Always load PPTX from /tmp because Render only supports this folder for writable storage.
+    FIX: Always load PPTX from /tmp because Render only persists files there.
     """
     file_path = f"/tmp/{presentation_id}.pptx"
 
     if not os.path.exists(file_path):
         raise HTTPException(
             status_code=404,
-            detail=f"No exported PPTX found for presentation {presentation_id} in /tmp"
+            detail=f"No exported PPTX found for presentation {presentation_id}"
         )
 
     return FileResponse(
@@ -348,7 +438,7 @@ async def download_presentation(presentation_id: uuid.UUID):
 
 
 # -------------------------
-# Gemini Wrapper (always hybrid)
+# Gemini wrapper
 # -------------------------
 async def generate_presentation_from_gemini(**kwargs):
     tone_enum = coerce_enum(Tone, kwargs.get("tone", "default"), Tone.DEFAULT)
@@ -373,4 +463,3 @@ async def generate_presentation_from_gemini(**kwargs):
 
 
 generate_presentation = generate_presentation_from_gemini
-
